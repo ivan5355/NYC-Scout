@@ -6,6 +6,11 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = process.env.TOKEN || 'token';
 
+// Homepage
+app.get('/', (req, res) => {
+  res.send('Instagram Webhook Server is running!');
+});
+
 // Webhook verification
 app.get('/instagram', (req, res) => {
   const mode = req.query['hub.mode'];
