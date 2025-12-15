@@ -19,7 +19,6 @@ app.get('/privacy', (req, res) => {
     <head><title>Privacy Policy - NYC Scout</title></head>
     <body style="font-family: sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
       <h1>Privacy Policy</h1>
-      <p><strong>Last updated:</strong> December 14, 2024</p>
       
       <h2>About NYC Scout</h2>
       <p>NYC Scout is an automated chatbot that helps you discover events happening in New York City through Instagram direct messages.</p>
@@ -60,7 +59,6 @@ app.get('/terms', (req, res) => {
     <head><title>Terms of Service - NYC Scout</title></head>
     <body style="font-family: sans-serif; padding: 40px; max-width: 800px; margin: 0 auto;">
       <h1>Terms of Service</h1>
-      <p><strong>Last updated:</strong> December 14, 2024</p>
       
       <h2>Acceptance of Terms</h2>
       <p>By messaging NYC Scout on Instagram, you agree to these terms.</p>
