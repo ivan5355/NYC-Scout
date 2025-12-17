@@ -2,11 +2,14 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios');
 const app = express();
 
 app.use(bodyParser.json());
 
 const VERIFY_TOKEN = process.env.TOKEN || 'token';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
 // Store recent DMs in memory (in production, use a database)
 let recentDMs = [];
@@ -110,15 +113,18 @@ app.post('/instagram', (req, res) => {
 });
 
 // Function to process incoming DMs
-function processDM(dmData) {
+async function processDM(dmData) {
   console.log('Processing DM:', dmData);
+  
+  const senderId = dmData.sender?.id;
+  const messageText = dmData.message?.text;
   
   // Store the DM
   const dmRecord = {
     timestamp: new Date().toISOString(),
-    senderId: dmData.sender?.id,
+    senderId,
     recipientId: dmData.recipient?.id,
-    messageText: dmData.message?.text,
+    messageText,
     rawData: dmData
   };
   
@@ -129,34 +135,53 @@ function processDM(dmData) {
     recentDMs = recentDMs.slice(-50);
   }
   
-  // Log important DM details
-  if (dmData.sender?.id) {
-    console.log(`DM received from user ${dmData.sender.id}`);
-    
-    if (dmData.message?.text) {
-      console.log(`Message content: ${dmData.message.text}`);
-      
-      // Keyword detection
-      const messageText = dmData.message.text.toLowerCase();
-      if (messageText.includes('scout') || messageText.includes('nyc')) {
-        console.log('🚨 DM contains scout/nyc keywords - flagging for attention');
-        dmRecord.flagged = true;
-      }
-      
-      // Add more keyword detection as needed
-      const keywords = ['help', 'info', 'question', 'booking', 'event'];
-      const foundKeywords = keywords.filter(keyword => messageText.includes(keyword));
-      if (foundKeywords.length > 0) {
-        console.log(`📝 DM contains keywords: ${foundKeywords.join(', ')}`);
-        dmRecord.keywords = foundKeywords;
-      }
+  // Generate and send response if we have a message
+  if (senderId && messageText) {
+    try {
+      const aiResponse = await getGeminiResponse(messageText);
+      await sendInstagramMessage(senderId, aiResponse);
+      dmRecord.response = aiResponse;
+    } catch (error) {
+      console.error('Error processing DM:', error.message);
     }
   }
+}
+
+// Get response from Gemini API
+async function getGeminiResponse(userMessage) {
+  if (!GEMINI_API_KEY) {
+    console.log('GEMINI_API_KEY not set');
+    return 'Thanks for your message! We will get back to you soon.';
+  }
+
+  const response = await axios.post(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      contents: [{
+        parts: [{ text: `You are a helpful assistant responding to Instagram DMs. Keep responses brief and friendly. User message: ${userMessage}` }]
+      }]
+    }
+  );
+
+  return response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'Thanks for reaching out!';
+}
+
+// Send message via Instagram API
+async function sendInstagramMessage(recipientId, messageText) {
+  if (!PAGE_ACCESS_TOKEN) {
+    console.log('PAGE_ACCESS_TOKEN not set - cannot send message');
+    return;
+  }
+
+  await axios.post(
+    `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      recipient: { id: recipientId },
+      message: { text: messageText }
+    }
+  );
   
-  // Here you can add:
-  // - Database storage
-  // - Automated responses
-  // - Notifications
+  console.log(`Message sent to ${recipientId}`);
 }
 
 const PORT = process.env.PORT || 3000;
