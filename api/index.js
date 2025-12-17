@@ -117,7 +117,7 @@ async function getGeminiResponse(userMessage) {
 
   try {
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent',
       {
         contents: [{
           parts: [{
@@ -135,7 +135,7 @@ async function getGeminiResponse(userMessage) {
       'Thanks for reaching out!'
     );
   } catch (err) {
-    console.error('Gemini error:', err.code || err.message);
+    console.error('Gemini error:', err.response?.status, err.response?.data || err.message);
     throw err; // handled upstream
   }
 }
