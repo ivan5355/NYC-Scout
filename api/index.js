@@ -75,18 +75,11 @@ app.post('/instagram', (req, res) => {
   console.log('Webhook received:', JSON.stringify(req.body, null, 2));
 
   const entry = req.body.entry?.[0];
-  const pageId = entry?.id;
-
-  // Verify this is for the nyc_scout page
-  if (pageId && pageId !== process.env.INSTAGRAM_PAGE_ID) {
-    console.log(`Ignoring webhook for page ${pageId} - not nyc_scout`);
-    return res.sendStatus(200);
-  }
 
   // Handle "changes" format (Instagram uses this)
   const change = entry?.changes?.[0];
   if (change?.field === 'messages' && change?.value) {
-    console.log('New IG DM to nyc_scout (changes format)');
+    console.log('New IG DM received (changes format)');
     console.log('Data:', JSON.stringify(change.value, null, 2));
     
     // Process the DM
@@ -100,7 +93,7 @@ app.post('/instagram', (req, res) => {
     const messageText = messaging.message?.text;
     const recipientId = messaging.recipient?.id;
     
-    console.log('New IG DM to nyc_scout (messaging format)');
+    console.log('New IG DM received (messaging format)');
     console.log('From:', senderId);
     console.log('To:', recipientId);
     console.log('Message:', messageText);
@@ -118,7 +111,7 @@ app.post('/instagram', (req, res) => {
 
 // Function to process incoming DMs
 function processDM(dmData) {
-  console.log('Processing DM to nyc_scout:', dmData);
+  console.log('Processing DM:', dmData);
   
   // Store the DM
   const dmRecord = {
