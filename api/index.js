@@ -121,29 +121,19 @@ app.post('/instagram', (req, res) => {
 async function processDM(senderId, messageText) {
   console.log(`Incoming DM from ${senderId}: ${messageText}`);
 
-  const record = {
-    timestamp: new Date().toISOString(),
-    senderId,
-    messageText,
-  };
-  recentDMs.push(record);
-  if (recentDMs.length > 50) recentDMs = recentDMs.slice(-50);
-
   try {
-
     console.log('About to generate reply...');
     const reply = await getGeminiResponse(messageText);
     console.log('Generated reply:', reply);
+
     console.log('About to send reply...');
     await sendInstagramMessage(senderId, reply);
     console.log('Finished sendInstagramMessage call');
-
-    await sendInstagramMessage(senderId, reply);
-    record.reply = reply;
   } catch (err) {
     console.error('Error processing DM:', err.message);
   }
 }
+
 
 /* =====================
    GEMINI RESPONSE
