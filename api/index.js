@@ -117,7 +117,7 @@ async function getGeminiResponse(userMessage) {
 
   try {
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
       {
         contents: [{
           parts: [{
