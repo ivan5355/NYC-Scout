@@ -66,25 +66,28 @@ app.get('/instagram', (req, res) => {
 /* =====================
    WEBHOOK RECEIVE
 ===================== */
-app.post('/instagram', (req, res) => {
+app.post('/instagram', async (req, res) => {
   console.log('🚀 POST /instagram hit');
-  res.sendStatus(200); // ACK immediately
 
   const entry = req.body.entry?.[0];
   const messaging = entry?.messaging?.[0];
-  if (!messaging) return;
-
-  if (messaging.message?.is_echo) {
-    console.log('Ignoring echo');
-    return;
+  
+  if (!messaging || messaging.message?.is_echo) {
+    console.log('No message or echo, skipping');
+    return res.sendStatus(200);
   }
 
   const senderId = messaging.sender?.id;
   const text = messaging.message?.text;
 
-  if (!senderId || !text) return;
+  if (!senderId || !text) {
+    return res.sendStatus(200);
+  }
 
-  processDM(senderId, text);
+  // Process BEFORE responding so Vercel doesn't kill the function
+  await processDM(senderId, text);
+  
+  res.sendStatus(200);
 });
 
 /* =====================
@@ -117,13 +120,17 @@ async function getGeminiResponse(userMessage) {
 
   try {
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
       {
         contents: [{
           parts: [{
-            text: `You are a helpful Instagram assistant. Keep replies short.\nUser: ${userMessage}`
+            text: `You are a helpful Instagram assistant. Keep replies short (1-2 sentences max).\nUser: ${userMessage}`
           }]
-        }]
+        }],
+        generationConfig: {
+          maxOutputTokens: 100,
+          temperature: 0.7
+        }
       },
       {
         params: { key: GEMINI_API_KEY }
