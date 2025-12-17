@@ -19,56 +19,33 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
    AXIOS CLIENTS
 ===================== */
 const geminiClient = axios.create({
-  timeout: 15000,
+  timeout: 30000, // ⬅️ FIX: increase timeout
   httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
 const graphClient = axios.create({
-  timeout: 10000,
+  timeout: 15000,
   httpsAgent: new https.Agent({ keepAlive: true }),
 });
-
-/* =====================
-   IN-MEMORY STORAGE
-===================== */
-let recentDMs = [];
 
 /* =====================
    ROUTES
 ===================== */
 
-// Homepage
 app.get('/', (req, res) => {
-  res.send(`
-    <h1>Instagram Webhook Server</h1>
-    <p>Status: Running</p>
-    <h3>Recent DMs (${recentDMs.length})</h3>
-    <pre>${JSON.stringify(recentDMs.slice(-10), null, 2)}</pre>
-  `);
+  res.send(`<h1>Instagram Webhook Running</h1>`);
 });
 
-// Privacy Policy
 app.get('/privacy-policy', (req, res) => {
   const file = path.join(__dirname, '..', 'privacy-policy.html');
   if (fs.existsSync(file)) return res.sendFile(file);
-  res.status(404).send('Privacy Policy not found');
+  res.status(404).send('Not found');
 });
 
-// Terms of Service
 app.get('/terms-of-service', (req, res) => {
   const file = path.join(__dirname, '..', 'terms-of-service.html');
   if (fs.existsSync(file)) return res.sendFile(file);
-  res.status(404).send('Terms not found');
-});
-
-// Health check
-app.get('/test', (req, res) => {
-  res.json({
-    ok: true,
-    hasPageToken: !!PAGE_ACCESS_TOKEN,
-    hasGeminiKey: !!GEMINI_API_KEY,
-    recentDMs: recentDMs.length,
-  });
+  res.status(404).send('Not found');
 });
 
 /* =====================
@@ -90,29 +67,24 @@ app.get('/instagram', (req, res) => {
    WEBHOOK RECEIVE
 ===================== */
 app.post('/instagram', (req, res) => {
-  // ACK immediately (VERY IMPORTANT for Vercel)
-  res.sendStatus(200);
+  console.log('🚀 POST /instagram hit');
+  res.sendStatus(200); // ACK immediately
 
-  try {
-    const entry = req.body.entry?.[0];
-    const messaging = entry?.messaging?.[0];
-    if (!messaging) return;
+  const entry = req.body.entry?.[0];
+  const messaging = entry?.messaging?.[0];
+  if (!messaging) return;
 
-    // Ignore echo (messages sent by the page itself)
-    if (messaging.message?.is_echo) {
-      console.log('Ignoring echo message');
-      return;
-    }
-
-    const senderId = messaging.sender?.id;
-    const text = messaging.message?.text;
-
-    if (!senderId || !text) return;
-
-    processDM(senderId, text);
-  } catch (err) {
-    console.error('Webhook handler error:', err.message);
+  if (messaging.message?.is_echo) {
+    console.log('Ignoring echo');
+    return;
   }
+
+  const senderId = messaging.sender?.id;
+  const text = messaging.message?.text;
+
+  if (!senderId || !text) return;
+
+  processDM(senderId, text);
 });
 
 /* =====================
@@ -121,26 +93,26 @@ app.post('/instagram', (req, res) => {
 async function processDM(senderId, messageText) {
   console.log(`Incoming DM from ${senderId}: ${messageText}`);
 
+  let reply;
+
   try {
-    console.log('About to generate reply...');
-    const reply = await getGeminiResponse(messageText);
-    console.log('Generated reply:', reply);
-
-    console.log('About to send reply...');
-    await sendInstagramMessage(senderId, reply);
-    console.log('Finished sendInstagramMessage call');
+    console.log('Calling Gemini...');
+    reply = await getGeminiResponse(messageText);
+    console.log('Gemini reply:', reply);
   } catch (err) {
-    console.error('Error processing DM:', err.message);
+    console.error('Gemini failed, using fallback');
+    reply = 'Thanks for your message! We’ll get back to you shortly.';
   }
-}
 
+  await sendInstagramMessage(senderId, reply);
+}
 
 /* =====================
    GEMINI RESPONSE
 ===================== */
 async function getGeminiResponse(userMessage) {
   if (!GEMINI_API_KEY) {
-    return 'Thanks for your message! We’ll get back to you shortly.';
+    return 'Thanks for reaching out!';
   }
 
   try {
@@ -149,7 +121,7 @@ async function getGeminiResponse(userMessage) {
       {
         contents: [{
           parts: [{
-            text: `You are a helpful Instagram assistant. Keep replies short and friendly.\nUser: ${userMessage}`
+            text: `You are a helpful Instagram assistant. Keep replies short.\nUser: ${userMessage}`
           }]
         }]
       },
@@ -164,7 +136,7 @@ async function getGeminiResponse(userMessage) {
     );
   } catch (err) {
     console.error('Gemini error:', err.code || err.message);
-    return 'Thanks for your message! A team member will reply soon.';
+    throw err; // handled upstream
   }
 }
 
@@ -191,7 +163,7 @@ async function sendInstagramMessage(recipientId, text) {
     console.log(`Reply sent to ${recipientId}`);
   } catch (err) {
     console.error(
-      'Failed to send message:',
+      'Send failed:',
       err.response?.data || err.message
     );
   }
