@@ -28,7 +28,7 @@
 
 # Deploy to Vercel
 
-> ⚠️ **Important:** Vercel automatically deploys from your main branch. Every time you push changes to GitHub, your production app will update immediately. Be careful with your commits!
+> ⚠️ **Important:** Vercel automatically deploys from your main branch. Every time you push changes to GitHub, your production app will update immediately. 
 
 ## Quick Deploy
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/YOUR_REPO_NAME)
@@ -61,6 +61,59 @@
 npm i -g vercel
 vercel
 ```
+
+---
+
+# How It Works
+
+## Architecture
+
+```
+Instagram DM → Facebook Webhook → Vercel (index.js) → helpers.js → Response
+```
+
+## File Structure
+
+- **`api/index.js`** - Express routes and webhook handlers
+- **`api/helpers.js`** - Event fetching, filtering, and AI functions
+
+## Flow
+
+1. **User sends DM** to your Instagram account
+2. **Facebook webhook** delivers the message to `POST /instagram`
+3. **Query detection** checks if the message is about NYC events (keywords like "concert", "brooklyn", "this weekend")
+4. **If event query:**
+   - Fetches live data from NYC Open Data API + NYC Parks API
+   - Uses Gemini AI to parse natural language into filters (date, category, borough)
+   - Filters events and returns top 5 matches
+5. **If general message:**
+   - Sends to Gemini for a conversational response
+6. **Response sent** back to user via Instagram DM
+
+## Data Sources
+
+| Source | API | Events |
+|--------|-----|--------|
+| NYC Permitted Events | `data.cityofnewyork.us/resource/tvpp-9vvx.json` | Parades, street fairs, film shoots |
+| NYC Parks | `nycgovparks.org/xml/events_300_rss.json` | Park concerts, fitness classes, kids activities |
+
+## Supported Queries
+
+- "What concerts are in Brooklyn this weekend?"
+- "Any parades in Manhattan?"
+- "Events in Queens tomorrow"
+- "Show me festivals in December"
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Health check |
+| `/instagram` | GET | Webhook verification |
+| `/instagram` | POST | Receive DMs |
+| `/events/search?q=...` | GET | Search events (for testing) |
+| `/privacy-policy` | GET | Privacy policy page |
+| `/terms-of-service` | GET | Terms of service page |
 
 
 
