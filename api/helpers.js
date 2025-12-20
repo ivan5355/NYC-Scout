@@ -1,48 +1,48 @@
 const axios = require('axios');
 const https = require('https');
 
-/* =====================
-   ENV VARIABLES
-===================== */
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
-/* =====================
-   AXIOS CLIENTS
-===================== */
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;  
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;  
+
+
 const geminiClient = axios.create({
-  timeout: 30000,
-  httpsAgent: new https.Agent({ keepAlive: true }),
+  timeout: 30000,  // 30 second timeout for AI requests
+  httpsAgent: new https.Agent({ keepAlive: true }),  // Reuse connections
 });
 
 const graphClient = axios.create({
-  timeout: 15000,
-  httpsAgent: new https.Agent({ keepAlive: true }),
+  timeout: 15000,  // 15 second timeout for Instagram API
+  httpsAgent: new https.Agent({ keepAlive: true }),  // Reuse connections
 });
 
-/* =====================
-   NYC EVENTS API
-===================== */
-const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9vvx.json';
-const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json';
 
+const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9vvx.json';
+const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json'; 
+
+// Convert 12-hour time to 24-hour format (e.g., "9:00 am" -> "09:00:00")
 function parseTime12h(timeStr) {
   if (!timeStr) return '00:00:00';
   try {
     const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
     if (!match) return '00:00:00';
+    
     let [, hours, minutes, period] = match;
     hours = parseInt(hours, 10);
+    
     if (period.toLowerCase() === 'pm' && hours !== 12) hours += 12;
     if (period.toLowerCase() === 'am' && hours === 12) hours = 0;
+    
     return `${hours.toString().padStart(2, '0')}:${minutes}:00`;
   } catch {
     return '00:00:00';
   }
 }
 
+// Fetch official NYC permitted events (parades, street fairs, etc.)
 async function fetchPermittedEvents() {
   const today = new Date().toISOString().split('T')[0];
+  
   const response = await axios.get(NYC_PERMITTED_EVENTS_URL, {
     params: {
       '$where': `start_date_time >= '${today}'`,
@@ -52,6 +52,7 @@ async function fetchPermittedEvents() {
     timeout: 10000
   });
 
+  // Map to consistent schema
   return response.data.map(event => ({
     event_id: event.event_id,
     event_name: event.event_name,
@@ -66,10 +67,12 @@ async function fetchPermittedEvents() {
 }
 
 
+// Fetch NYC Parks events and normalize to match permitted events schema
 async function fetchParksEvents() {
   const response = await axios.get(NYC_PARKS_EVENTS_URL, { timeout: 10000 });
   const events = response.data;
 
+  // Map park ID prefixes to borough names
   const boroughMap = { M: 'Manhattan', B: 'Brooklyn', Q: 'Queens', X: 'Bronx', R: 'Staten Island' };
 
   return events.map(event => {
@@ -77,29 +80,38 @@ async function fetchParksEvents() {
     const endDate = event.enddate || startDate;
     const startTime = parseTime12h(event.starttime);
     const endTime = parseTime12h(event.endtime);
+    
     const parkId = event.parkids || '';
     const borough = boroughMap[parkId[0]?.toUpperCase()] || null;
 
     return {
-      event_id: event.guid,
-      event_name: event.title,
-      start_date_time: startDate ? `${startDate}T${startTime}` : null,
-      end_date_time: endDate ? `${endDate}T${endTime}` : null,
-      event_agency: 'NYC Parks',
-      event_type: event.categories,
-      event_borough: borough,
-      event_location: event.location,
-      street_closure_type: null
+      event_id: event.guid,                    // Parks use 'guid' for ID
+      event_name: event.title,                 // Parks use 'title' for name
+      start_date_time: startDate ? `${startDate}T${startTime}` : null,  // Combine date + time
+      end_date_time: endDate ? `${endDate}T${endTime}` : null,          // Combine date + time
+      event_agency: 'NYC Parks',               // All parks events have same agency
+      event_type: event.categories,            // Parks use 'categories' field
+      event_borough: borough,                  // Derived from park ID prefix
+      event_location: event.location,          // Parks use 'location' field
+      street_closure_type: null                // Parks events don't have street closures
     };
   });
 }
 
+// Combine both data sources into unified list
 async function fetchAllEvents() {
   try {
     const [permitted, parks] = await Promise.all([
-      fetchPermittedEvents().catch(err => { console.error('Permitted events fetch failed:', err.message); return []; }),
-      fetchParksEvents().catch(err => { console.error('Parks events fetch failed:', err.message); return []; })
+      fetchPermittedEvents().catch(err => { 
+        console.error('Permitted events fetch failed:', err.message); 
+        return [];
+      }),
+      fetchParksEvents().catch(err => { 
+        console.error('Parks events fetch failed:', err.message); 
+        return [];
+      })
     ]);
+    
     console.log(`Fetched ${permitted.length} permitted + ${parks.length} parks events`);
     return [...permitted, ...parks];
   } catch (err) {
@@ -108,15 +120,13 @@ async function fetchAllEvents() {
   }
 }
 
-/* =====================
-   EVENT FILTER HELPERS
-===================== */
+// Extract filters from natural language queries
 function extractFiltersFromQuery(query) {
   const queryLower = query.toLowerCase();
   const filters = {};
   const today = new Date();
 
-  // Date extraction
+  // Handle relative dates
   if (queryLower.includes('today')) {
     filters.date = { type: 'specific', date: today.toISOString().split('T')[0] };
   } else if (queryLower.includes('tomorrow')) {
@@ -136,7 +146,7 @@ function extractFiltersFromQuery(query) {
     };
   }
 
-  // Month extraction
+  // Handle month names
   const months = {
     january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
     july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
@@ -150,7 +160,7 @@ function extractFiltersFromQuery(query) {
     }
   }
 
-  // Category extraction
+  // Map keywords to event categories
   const categories = {
     concert: ['concert', 'music', 'performance', 'show'],
     festival: ['festival', 'fest', 'celebration'],
@@ -171,7 +181,7 @@ function extractFiltersFromQuery(query) {
     }
   }
 
-  // Borough extraction
+  // Map location keywords to boroughs
   const boroughs = {
     Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'central park'],
     Brooklyn: ['brooklyn', 'bk', 'prospect park'],
@@ -190,10 +200,11 @@ function extractFiltersFromQuery(query) {
 }
 
 
+// Apply extracted filters to event list
 function applyFilters(events, filters) {
   let results = [...events];
 
-  // Date filter
+  // Filter by date criteria
   if (filters.date) {
     results = results.filter(event => {
       const startDt = event.start_date_time;
@@ -212,7 +223,7 @@ function applyFilters(events, filters) {
     });
   }
 
-  // Category filter
+  // Filter by event type/category
   if (filters.category) {
     const categoryKeywords = {
       concert: ['concert', 'music', 'performance', 'live'],
@@ -228,6 +239,7 @@ function applyFilters(events, filters) {
       theater: ['theater', 'theatre', 'play', 'broadway', 'drama']
     };
     const keywords = categoryKeywords[filters.category] || [filters.category];
+    
     results = results.filter(event => {
       const eventType = (event.event_type || '').toLowerCase();
       const eventName = (event.event_name || '').toLowerCase();
@@ -235,7 +247,7 @@ function applyFilters(events, filters) {
     });
   }
 
-  // Borough filter
+  // Filter by NYC borough
   if (filters.borough) {
     results = results.filter(event =>
       (event.event_borough || '').toLowerCase() === filters.borough.toLowerCase()
@@ -245,15 +257,14 @@ function applyFilters(events, filters) {
   return results;
 }
 
-/* =====================
-   GEMINI FUNCTIONS
-===================== */
+// Use Gemini AI to parse complex queries, fallback to rule-based extraction
 async function extractFiltersWithGemini(query) {
   if (!GEMINI_API_KEY) {
     return extractFiltersFromQuery(query);
   }
 
   const today = new Date().toISOString().split('T')[0];
+  
   const prompt = `Extract event search filters from this query. Today's date is ${today}.
 
 Query: "${query}"
@@ -273,23 +284,28 @@ Only return valid JSON, no explanation.`;
       'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
       {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
+        generationConfig: { maxOutputTokens: 200, temperature: 0.1 }  // Low temperature for consistent output
       },
       { params: { key: GEMINI_API_KEY } }
     );
 
+    // Extract and parse JSON from AI response
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    // Clean up markdown code blocks if present
     if (text.startsWith('```')) {
       text = text.split('\n').slice(1).join('\n');
       text = text.replace(/```$/, '').trim();
     }
+    
     return JSON.parse(text);
   } catch (err) {
     console.error('Gemini filter extraction failed:', err.message);
-    return extractFiltersFromQuery(query);
+    return extractFiltersFromQuery(query);  // Fallback to rule-based
   }
 }
 
+// Generate conversational responses for non-event queries
 async function getGeminiResponse(userMessage) {
   if (!GEMINI_API_KEY) {
     return 'Thanks for reaching out!';
@@ -323,18 +339,18 @@ async function getGeminiResponse(userMessage) {
 }
 
 
-/* =====================
-   EVENT SEARCH
-===================== */
+// Main search function: process user query and return matching events
 async function searchEvents(query) {
   const [filters, events] = await Promise.all([
     extractFiltersWithGemini(query),
     fetchAllEvents()
   ]);
+  
   const results = applyFilters(events, filters);
   return { query, filters, results, count: results.length };
 }
 
+// Convert search results to user-friendly text for Instagram messages
 function formatEventResults(searchResult) {
   if (searchResult.count === 0) {
     return "I couldn't find any events matching your search. Try a different date, category, or borough!";
@@ -352,10 +368,7 @@ function formatEventResults(searchResult) {
 
   return response;
 }
-
-/* =====================
-   INSTAGRAM MESSAGING
-===================== */
+// Reply to Instagram DM using Facebook Graph API
 async function sendInstagramMessage(recipientId, text) {
   if (!PAGE_ACCESS_TOKEN) {
     console.error('PAGE_ACCESS_TOKEN missing');
@@ -377,9 +390,7 @@ async function sendInstagramMessage(recipientId, text) {
   }
 }
 
-/* =====================
-   EXPORTS
-===================== */
+// Export functions for use in other files
 module.exports = {
   fetchAllEvents,
   searchEvents,
