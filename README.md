@@ -69,12 +69,12 @@ vercel
 ## Architecture
 
 ```
-Instagram DM → Facebook Webhook → Vercel (index.js) → helpers.js → Response
+Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js → Response
 ```
 
 ## File Structure
 
-- **`api/index.js`** - Express routes and webhook handlers
+- **`api/api.js`** - Express routes and webhook handlers
 - **`api/helpers.js`** - Event fetching, filtering, and AI functions
 
 ## Flow

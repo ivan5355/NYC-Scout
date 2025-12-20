@@ -15,9 +15,6 @@ const {
   isRestaurantQuery,
   searchRestaurants,
   formatRestaurantResults,
-  getTopRatedRestaurants,
-  getRestaurantsByCuisine,
-  getRestaurantsByBorough
 } = require('./restaurantHelpers');
 
 const app = express();
@@ -50,38 +47,6 @@ app.get('/events/search', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'Missing query parameter "q"' });
   const result = await searchEvents(query);
   res.json(result);
-});
-
-// Restaurant search endpoint
-app.get('/restaurants/search', async (req, res) => {
-  const query = req.query.q;
-  if (!query) return res.status(400).json({ error: 'Missing query parameter "q"' });
-  const result = await searchRestaurants(query);
-  res.json(result);
-});
-
-// Get top-rated restaurants
-app.get('/restaurants/top', async (req, res) => {
-  const limit = parseInt(req.query.limit) || 10;
-  const minRating = parseFloat(req.query.minRating) || 4;
-  const results = await getTopRatedRestaurants(limit, minRating);
-  res.json({ results, count: results.length });
-});
-
-// Get restaurants by cuisine
-app.get('/restaurants/cuisine/:cuisine', async (req, res) => {
-  const cuisine = req.params.cuisine;
-  const limit = parseInt(req.query.limit) || 10;
-  const results = await getRestaurantsByCuisine(cuisine, limit);
-  res.json({ cuisine, results, count: results.length });
-});
-
-// Get restaurants by borough
-app.get('/restaurants/borough/:borough', async (req, res) => {
-  const borough = req.params.borough;
-  const limit = parseInt(req.query.limit) || 20;
-  const results = await getRestaurantsByBorough(borough, limit);
-  res.json({ borough, results, count: results.length });
 });
 
 /* =====================
