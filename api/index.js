@@ -11,6 +11,15 @@ const {
   sendInstagramMessage
 } = require('./helpers');
 
+const {
+  isRestaurantQuery,
+  searchRestaurants,
+  formatRestaurantResults,
+  getTopRatedRestaurants,
+  getRestaurantsByCuisine,
+  getRestaurantsByBorough
+} = require('./restaurantHelpers');
+
 const app = express();
 app.use(bodyParser.json());
 
@@ -41,6 +50,38 @@ app.get('/events/search', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'Missing query parameter "q"' });
   const result = await searchEvents(query);
   res.json(result);
+});
+
+// Restaurant search endpoint
+app.get('/restaurants/search', async (req, res) => {
+  const query = req.query.q;
+  if (!query) return res.status(400).json({ error: 'Missing query parameter "q"' });
+  const result = await searchRestaurants(query);
+  res.json(result);
+});
+
+// Get top-rated restaurants
+app.get('/restaurants/top', async (req, res) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const minRating = parseFloat(req.query.minRating) || 4;
+  const results = await getTopRatedRestaurants(limit, minRating);
+  res.json({ results, count: results.length });
+});
+
+// Get restaurants by cuisine
+app.get('/restaurants/cuisine/:cuisine', async (req, res) => {
+  const cuisine = req.params.cuisine;
+  const limit = parseInt(req.query.limit) || 10;
+  const results = await getRestaurantsByCuisine(cuisine, limit);
+  res.json({ cuisine, results, count: results.length });
+});
+
+// Get restaurants by borough
+app.get('/restaurants/borough/:borough', async (req, res) => {
+  const borough = req.params.borough;
+  const limit = parseInt(req.query.limit) || 20;
+  const results = await getRestaurantsByBorough(borough, limit);
+  res.json({ borough, results, count: results.length });
 });
 
 /* =====================
@@ -92,26 +133,40 @@ async function processDM(senderId, messageText) {
   let reply;
   const lowerMsg = messageText.toLowerCase();
 
-  const eventKeywords = ['event', 'concert', 'festival', 'parade', 'fair', 'show', 'happening', "what's on", 'things to do'];
-  const isEventQuery = eventKeywords.some(k => lowerMsg.includes(k)) ||
-                       ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten'].some(b => lowerMsg.includes(b));
-
-  if (isEventQuery) {
+  // Check if user is asking about restaurants
+  if (isRestaurantQuery(messageText)) {
     try {
-      console.log('Processing as event query...');
-      const searchResult = await searchEvents(messageText);
-      reply = formatEventResults(searchResult);
+      console.log('Processing as restaurant query...');
+      const searchResult = await searchRestaurants(messageText);
+      reply = formatRestaurantResults(searchResult);
     } catch (err) {
-      console.error('Event search failed:', err.message);
+      console.error('Restaurant search failed:', err.message);
       reply = await getGeminiResponse(messageText);
     }
-  } else {
-    try {
-      console.log('Calling Gemini for general response...');
-      reply = await getGeminiResponse(messageText);
-    } catch (err) {
-      console.error('Gemini failed, using fallback');
-      reply = "Thanks for your message! We'll get back to you shortly.";
+  }
+  // Check if user is asking about events
+  else {
+    const eventKeywords = ['event', 'concert', 'festival', 'parade', 'fair', 'show', 'happening', "what's on", 'things to do'];
+    const isEventQuery = eventKeywords.some(k => lowerMsg.includes(k)) ||
+                         ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten'].some(b => lowerMsg.includes(b));
+
+    if (isEventQuery) {
+      try {
+        console.log('Processing as event query...');
+        const searchResult = await searchEvents(messageText);
+        reply = formatEventResults(searchResult);
+      } catch (err) {
+        console.error('Event search failed:', err.message);
+        reply = await getGeminiResponse(messageText);
+      }
+    } else {
+      try {
+        console.log('Calling Gemini for general response...');
+        reply = await getGeminiResponse(messageText);
+      } catch (err) {
+        console.error('Gemini failed, using fallback');
+        reply = "Thanks for your message! We'll get back to you shortly.";
+      }
     }
   }
 

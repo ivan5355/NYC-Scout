@@ -1,48 +1,41 @@
 const axios = require('axios');
 const https = require('https');
 
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;  
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;  
-
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
 const geminiClient = axios.create({
-  timeout: 30000,  // 30 second timeout for AI requests
-  httpsAgent: new https.Agent({ keepAlive: true }),  // Reuse connections
+  timeout: 30000,
+  httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
 const graphClient = axios.create({
-  timeout: 15000,  // 15 second timeout for Instagram API
-  httpsAgent: new https.Agent({ keepAlive: true }),  // Reuse connections
+  timeout: 15000,
+  httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
-
 const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9vvx.json';
-const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json'; 
+const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json';
 
-// Convert 12-hour time to 24-hour format (e.g., "9:00 am" -> "09:00:00")
+// Convert 12-hour time to 24-hour format
 function parseTime12h(timeStr) {
   if (!timeStr) return '00:00:00';
   try {
     const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
     if (!match) return '00:00:00';
-    
     let [, hours, minutes, period] = match;
     hours = parseInt(hours, 10);
-    
     if (period.toLowerCase() === 'pm' && hours !== 12) hours += 12;
     if (period.toLowerCase() === 'am' && hours === 12) hours = 0;
-    
     return `${hours.toString().padStart(2, '0')}:${minutes}:00`;
   } catch {
     return '00:00:00';
   }
 }
 
-// Fetch official NYC permitted events (parades, street fairs, etc.)
+// Fetch NYC permitted events
 async function fetchPermittedEvents() {
   const today = new Date().toISOString().split('T')[0];
-  
   const response = await axios.get(NYC_PERMITTED_EVENTS_URL, {
     params: {
       '$where': `start_date_time >= '${today}'`,
@@ -52,7 +45,6 @@ async function fetchPermittedEvents() {
     timeout: 10000
   });
 
-  // Map to consistent schema
   return response.data.map(event => ({
     event_id: event.event_id,
     event_name: event.event_name,
@@ -66,52 +58,38 @@ async function fetchPermittedEvents() {
   }));
 }
 
-
-// Fetch NYC Parks events and normalize to match permitted events schema
+// Fetch NYC Parks events
 async function fetchParksEvents() {
   const response = await axios.get(NYC_PARKS_EVENTS_URL, { timeout: 10000 });
-  const events = response.data;
-
-  // Map park ID prefixes to borough names
   const boroughMap = { M: 'Manhattan', B: 'Brooklyn', Q: 'Queens', X: 'Bronx', R: 'Staten Island' };
 
-  return events.map(event => {
+  return response.data.map(event => {
     const startDate = event.startdate || '';
     const endDate = event.enddate || startDate;
-    const startTime = parseTime12h(event.starttime);
-    const endTime = parseTime12h(event.endtime);
-    
     const parkId = event.parkids || '';
     const borough = boroughMap[parkId[0]?.toUpperCase()] || null;
 
     return {
-      event_id: event.guid,                    // Parks use 'guid' for ID
-      event_name: event.title,                 // Parks use 'title' for name
-      start_date_time: startDate ? `${startDate}T${startTime}` : null,  // Combine date + time
-      end_date_time: endDate ? `${endDate}T${endTime}` : null,          // Combine date + time
-      event_agency: 'NYC Parks',               // All parks events have same agency
-      event_type: event.categories,            // Parks use 'categories' field
-      event_borough: borough,                  // Derived from park ID prefix
-      event_location: event.location,          // Parks use 'location' field
-      street_closure_type: null                // Parks events don't have street closures
+      event_id: event.guid,
+      event_name: event.title,
+      start_date_time: startDate ? `${startDate}T${parseTime12h(event.starttime)}` : null,
+      end_date_time: endDate ? `${endDate}T${parseTime12h(event.endtime)}` : null,
+      event_agency: 'NYC Parks',
+      event_type: event.categories,
+      event_borough: borough,
+      event_location: event.location,
+      street_closure_type: null
     };
   });
 }
 
-// Combine both data sources into unified list
+// Combine both event sources
 async function fetchAllEvents() {
   try {
     const [permitted, parks] = await Promise.all([
-      fetchPermittedEvents().catch(err => { 
-        console.error('Permitted events fetch failed:', err.message); 
-        return [];
-      }),
-      fetchParksEvents().catch(err => { 
-        console.error('Parks events fetch failed:', err.message); 
-        return [];
-      })
+      fetchPermittedEvents().catch(err => { console.error('Permitted events failed:', err.message); return []; }),
+      fetchParksEvents().catch(err => { console.error('Parks events failed:', err.message); return []; })
     ]);
-    
     console.log(`Fetched ${permitted.length} permitted + ${parks.length} parks events`);
     return [...permitted, ...parks];
   } catch (err) {
@@ -126,31 +104,24 @@ function extractFiltersFromQuery(query) {
   const filters = {};
   const today = new Date();
 
-  // Handle relative dates
+  // Date handling
   if (queryLower.includes('today')) {
     filters.date = { type: 'specific', date: today.toISOString().split('T')[0] };
   } else if (queryLower.includes('tomorrow')) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     filters.date = { type: 'specific', date: tomorrow.toISOString().split('T')[0] };
-  } else if (queryLower.includes('weekend') || queryLower.includes('this weekend')) {
+  } else if (queryLower.includes('weekend')) {
     const daysUntilSat = (6 - today.getDay()) % 7;
     const saturday = new Date(today);
     saturday.setDate(today.getDate() + daysUntilSat);
     const sunday = new Date(saturday);
     sunday.setDate(saturday.getDate() + 1);
-    filters.date = {
-      type: 'range',
-      start_date: saturday.toISOString().split('T')[0],
-      end_date: sunday.toISOString().split('T')[0]
-    };
+    filters.date = { type: 'range', start_date: saturday.toISOString().split('T')[0], end_date: sunday.toISOString().split('T')[0] };
   }
 
-  // Handle month names
-  const months = {
-    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
-  };
+  // Month handling
+  const months = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
   for (const [name, num] of Object.entries(months)) {
     if (queryLower.includes(name)) {
       let year = today.getFullYear();
@@ -160,7 +131,7 @@ function extractFiltersFromQuery(query) {
     }
   }
 
-  // Map keywords to event categories
+  // Category handling
   const categories = {
     concert: ['concert', 'music', 'performance', 'show'],
     festival: ['festival', 'fest', 'celebration'],
@@ -169,7 +140,6 @@ function extractFiltersFromQuery(query) {
     fair: ['fair', 'street fair', 'block party'],
     movie: ['movie', 'film', 'screening'],
     art: ['art', 'exhibition', 'gallery'],
-    food: ['food', 'restaurant', 'dining'],
     fitness: ['fitness', 'yoga', 'workout'],
     kids: ['kids', 'children', 'family'],
     theater: ['theater', 'theatre', 'play', 'broadway']
@@ -181,12 +151,12 @@ function extractFiltersFromQuery(query) {
     }
   }
 
-  // Map location keywords to boroughs
+  // Borough handling
   const boroughs = {
     Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'central park'],
     Brooklyn: ['brooklyn', 'bk', 'prospect park'],
     Queens: ['queens', 'flushing', 'astoria'],
-    Bronx: ['bronx', 'the bronx'],
+    Bronx: ['bronx'],
     'Staten Island': ['staten island', 'staten']
   };
   for (const [borough, keywords] of Object.entries(boroughs)) {
@@ -199,23 +169,19 @@ function extractFiltersFromQuery(query) {
   return filters;
 }
 
-
-// Apply extracted filters to event list
+// Apply filters to event list
 function applyFilters(events, filters) {
   let results = [...events];
 
-  // Filter by date criteria
   if (filters.date) {
     results = results.filter(event => {
       const startDt = event.start_date_time;
       if (!startDt) return false;
       const eventDate = startDt.split('T')[0];
 
-      if (filters.date.type === 'specific') {
-        return eventDate === filters.date.date;
-      } else if (filters.date.type === 'range') {
-        return eventDate >= filters.date.start_date && eventDate <= filters.date.end_date;
-      } else if (filters.date.type === 'month') {
+      if (filters.date.type === 'specific') return eventDate === filters.date.date;
+      if (filters.date.type === 'range') return eventDate >= filters.date.start_date && eventDate <= filters.date.end_date;
+      if (filters.date.type === 'month') {
         const dt = new Date(eventDate);
         return dt.getMonth() + 1 === filters.date.month && dt.getFullYear() === filters.date.year;
       }
@@ -223,7 +189,6 @@ function applyFilters(events, filters) {
     });
   }
 
-  // Filter by event type/category
   if (filters.category) {
     const categoryKeywords = {
       concert: ['concert', 'music', 'performance', 'live'],
@@ -233,13 +198,11 @@ function applyFilters(events, filters) {
       fair: ['fair', 'street fair', 'block party', 'market'],
       movie: ['movie', 'film', 'screening', 'cinema'],
       art: ['art', 'exhibition', 'gallery', 'museum'],
-      food: ['food', 'culinary', 'taste', 'dining'],
       fitness: ['fitness', 'yoga', 'workout', 'exercise', 'health'],
       kids: ['kids', 'children', 'family', 'youth'],
       theater: ['theater', 'theatre', 'play', 'broadway', 'drama']
     };
     const keywords = categoryKeywords[filters.category] || [filters.category];
-    
     results = results.filter(event => {
       const eventType = (event.event_type || '').toLowerCase();
       const eventName = (event.event_name || '').toLowerCase();
@@ -247,141 +210,93 @@ function applyFilters(events, filters) {
     });
   }
 
-  // Filter by NYC borough
   if (filters.borough) {
-    results = results.filter(event =>
-      (event.event_borough || '').toLowerCase() === filters.borough.toLowerCase()
-    );
+    results = results.filter(event => (event.event_borough || '').toLowerCase() === filters.borough.toLowerCase());
   }
 
   return results;
 }
 
-// Use Gemini AI to parse complex queries, fallback to rule-based extraction
+
+// Use Gemini AI to parse complex queries
 async function extractFiltersWithGemini(query) {
-  if (!GEMINI_API_KEY) {
-    return extractFiltersFromQuery(query);
-  }
+  if (!GEMINI_API_KEY) return extractFiltersFromQuery(query);
 
   const today = new Date().toISOString().split('T')[0];
-  
   const prompt = `Extract event search filters from this query. Today's date is ${today}.
-
 Query: "${query}"
-
 Return a JSON object with these fields (only include fields that are mentioned):
 - date: object with "type" (specific/range/month) and relevant date fields
-  - For specific: {"type": "specific", "date": "YYYY-MM-DD"}
-  - For range: {"type": "range", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD"}
-  - For month: {"type": "month", "month": 1-12, "year": YYYY}
-- category: one of [concert, festival, sports, parade, fair, movie, art, food, fitness, kids, theater]
+- category: one of [concert, festival, sports, parade, fair, movie, art, fitness, kids, theater]
 - borough: one of [Manhattan, Brooklyn, Queens, Bronx, Staten Island]
-
 Only return valid JSON, no explanation.`;
 
   try {
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 200, temperature: 0.1 }  // Low temperature for consistent output
-      },
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200, temperature: 0.1 } },
       { params: { key: GEMINI_API_KEY } }
     );
-
-    // Extract and parse JSON from AI response
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    
-    // Clean up markdown code blocks if present
     if (text.startsWith('```')) {
-      text = text.split('\n').slice(1).join('\n');
-      text = text.replace(/```$/, '').trim();
+      text = text.split('\n').slice(1).join('\n').replace(/```$/, '').trim();
     }
-    
     return JSON.parse(text);
   } catch (err) {
     console.error('Gemini filter extraction failed:', err.message);
-    return extractFiltersFromQuery(query);  // Fallback to rule-based
+    return extractFiltersFromQuery(query);
   }
 }
 
-// Generate conversational responses for non-event queries
+// Generate conversational responses
 async function getGeminiResponse(userMessage) {
-  if (!GEMINI_API_KEY) {
-    return 'Thanks for reaching out!';
-  }
+  if (!GEMINI_API_KEY) return 'Thanks for reaching out!';
 
   try {
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
       {
-        contents: [{
-          parts: [{
-            text: `You are a helpful NYC events assistant on Instagram. Keep replies short (1-2 sentences max). If asked about events, suggest they ask about specific dates, boroughs, or event types.\nUser: ${userMessage}`
-          }]
-        }],
-        generationConfig: {
-          maxOutputTokens: 100,
-          temperature: 0.7
-        }
+        contents: [{ parts: [{ text: `You are a helpful NYC assistant on Instagram. Keep replies short (1-2 sentences max).\nUser: ${userMessage}` }] }],
+        generationConfig: { maxOutputTokens: 100, temperature: 0.7 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
-
-    return (
-      response.data.candidates?.[0]?.content?.parts?.[0]?.text ||
-      'Thanks for reaching out!'
-    );
+    return response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'Thanks for reaching out!';
   } catch (err) {
-    console.error('Gemini error:', err.response?.status, err.response?.data || err.message);
+    console.error('Gemini error:', err.message);
     throw err;
   }
 }
 
-
-// Main search function: process user query and return matching events
+// Main search function
 async function searchEvents(query) {
-  const [filters, events] = await Promise.all([
-    extractFiltersWithGemini(query),
-    fetchAllEvents()
-  ]);
-  
+  const [filters, events] = await Promise.all([extractFiltersWithGemini(query), fetchAllEvents()]);
   const results = applyFilters(events, filters);
   return { query, filters, results, count: results.length };
 }
 
-// Convert search results to user-friendly text for Instagram messages
+// Format event results for Instagram
 function formatEventResults(searchResult) {
-  if (searchResult.count === 0) {
-    return "I couldn't find any events matching your search. Try a different date, category, or borough!";
-  }
+  if (searchResult.count === 0) return "I couldn't find any events matching your search. Try a different date, category, or borough!";
 
   const events = searchResult.results.slice(0, 5);
   let response = `Found ${searchResult.count} event${searchResult.count > 1 ? 's' : ''}! Here are the top results:\n\n`;
-
   events.forEach((e, i) => {
     response += `${i + 1}. ${e.event_name || 'Unnamed Event'}\n`;
     if (e.start_date_time) response += `   📅 ${e.start_date_time.split('T')[0]}\n`;
     if (e.event_location) response += `   📍 ${e.event_location}\n`;
     if (e.event_borough) response += `   🏙️ ${e.event_borough}\n`;
   });
-
   return response;
 }
-// Reply to Instagram DM using Facebook Graph API
+
+// Send Instagram message
 async function sendInstagramMessage(recipientId, text) {
-  if (!PAGE_ACCESS_TOKEN) {
-    console.error('PAGE_ACCESS_TOKEN missing');
-    return;
-  }
+  if (!PAGE_ACCESS_TOKEN) { console.error('PAGE_ACCESS_TOKEN missing'); return; }
 
   try {
-    await graphClient.post(
-      'https://graph.facebook.com/v18.0/me/messages',
-      {
-        recipient: { id: recipientId },
-        message: { text }
-      },
+    await graphClient.post('https://graph.facebook.com/v18.0/me/messages',
+      { recipient: { id: recipientId }, message: { text } },
       { params: { access_token: PAGE_ACCESS_TOKEN } }
     );
     console.log(`Reply sent to ${recipientId}`);
@@ -390,7 +305,6 @@ async function sendInstagramMessage(recipientId, text) {
   }
 }
 
-// Export functions for use in other files
 module.exports = {
   fetchAllEvents,
   searchEvents,
