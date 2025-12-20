@@ -102,6 +102,71 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restauran
 | NYC Permitted Events | `data.cityofnewyork.us/resource/tvpp-9vvx.json` | Parades, street fairs, film shoots |
 | NYC Parks | `nycgovparks.org/xml/events_300_rss.json` | Park concerts, fitness classes, kids activities |
 
+## Filtering System
+
+### Restaurant Search Filters
+
+The application supports several types of filters for restaurant searches:
+
+1. **Cuisine Filtering**
+   - Searches the `cuisineDescription` field using case-insensitive regex
+   - Example: "Find Italian restaurants" → `{ cuisineDescription: /italian/i }`
+
+2. **Location/Borough Filtering**
+   - Searches the `fullAddress` field for borough names
+   - Supports all NYC boroughs (Manhattan, Brooklyn, Queens, Bronx, Staten Island)
+   - Example: "Pizza in Brooklyn" → `{ fullAddress: /brooklyn/i }`
+
+3. **Price Level Filtering**
+   - Filters by `priceLevel` field (1-4, where 1 is most affordable)
+   - Example: "Cheap restaurants" → `{ priceLevel: { $lte: 2 } }`
+
+4. **Rating Filtering**
+   - Filters by `rating` field (1-5 scale)
+   - Example: "Best Italian food" → `{ rating: { $gte: 4 } }`
+
+5. **Text Search**
+   - When no specific filters are detected, searches across:
+     - Restaurant name (`Name` field)
+     - Cuisine description (`cuisineDescription` field)
+   - Uses logical OR to match any search terms
+
+### Event Search Filters
+
+For NYC events, the system supports:
+- **Date filtering**: "events this weekend", "shows in December"
+- **Location filtering**: "events in Manhattan", "Brooklyn concerts"
+- **Category filtering**: "music events", "food festivals"
+- **Free events**: "free things to do"
+
+### Example Queries
+
+- "Show me Italian restaurants in Manhattan"
+  ```javascript
+  {
+    cuisineDescription: /italian/i,
+    fullAddress: /manhattan/i
+  }
+  ```
+
+- "Best pizza under $20"
+  ```javascript
+  {
+    cuisineDescription: /pizza/i,
+    priceLevel: { $lte: 2 },
+    rating: { $gte: 4 }
+  }
+  ```
+
+- "Free concerts this weekend"
+  ```javascript
+  {
+    category: /music|concert|live music/i,
+    isFree: true,
+    date: { $gte: startOfWeekend, $lte: endOfWeekend }
+  }
+  ```
+
 ## Supported Queries
 
 - "What concerts are in Brooklyn this weekend?"
