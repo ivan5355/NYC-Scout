@@ -1,15 +1,19 @@
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 
+// Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
+if (!MONGODB_URI) {
+  console.error('❌ MONGODB_URI or MONGO_URI environment variable is required');
+  process.exit(1);
+}
 
-// MongoDB connection
+// MongoDB connection (cached)
 let mongoClient = null;
 let restaurantsCollection = null;
 
-// Connect to MongoDB restaurants collection
 async function connectToMongoDB() {
   if (mongoClient && restaurantsCollection) return restaurantsCollection;
-  
+
   if (!MONGODB_URI) {
     console.error('MongoDB URI not found in environment variables');
     return null;
@@ -32,7 +36,7 @@ async function connectToMongoDB() {
 function isRestaurantQuery(query) {
   const queryLower = query.toLowerCase();
   const restaurantKeywords = [
-    'restaurant', 'restaurants', 'food', 'eat', 'eating', 'dinner', 'lunch', 
+    'restaurant', 'restaurants', 'food', 'eat', 'eating', 'dinner', 'lunch',
     'breakfast', 'brunch', 'cuisine', 'dining', 'dine', 'hungry', 'meal',
     'pizza', 'sushi', 'chinese', 'italian', 'mexican', 'indian', 'thai',
     'japanese', 'korean', 'french', 'american', 'seafood', 'steakhouse',
@@ -47,24 +51,23 @@ function extractRestaurantFilters(query) {
   const queryLower = query.toLowerCase();
   const filters = {};
 
-  // Cuisine types
   const cuisines = {
-    'italian': ['italian', 'pizza', 'pasta'],
-    'chinese': ['chinese', 'dim sum', 'szechuan'],
-    'japanese': ['japanese', 'sushi', 'ramen'],
-    'mexican': ['mexican', 'tacos', 'burrito'],
-    'indian': ['indian', 'curry', 'tandoori'],
-    'thai': ['thai', 'pad thai'],
-    'korean': ['korean', 'bbq', 'bibimbap'],
-    'french': ['french', 'bistro'],
-    'american': ['american', 'burger', 'steakhouse'],
-    'seafood': ['seafood', 'fish', 'lobster'],
-    'vegetarian': ['vegetarian', 'vegan', 'plant-based'],
-    'mediterranean': ['mediterranean', 'greek', 'falafel'],
-    'caribbean': ['caribbean', 'jamaican', 'jerk'],
+    italian: ['italian', 'pizza', 'pasta'],
+    chinese: ['chinese', 'dim sum', 'szechuan'],
+    japanese: ['japanese', 'sushi', 'ramen'],
+    mexican: ['mexican', 'tacos', 'burrito'],
+    indian: ['indian', 'curry', 'tandoori'],
+    thai: ['thai', 'pad thai'],
+    korean: ['korean', 'bbq', 'bibimbap'],
+    french: ['french', 'bistro'],
+    american: ['american', 'burger', 'steakhouse'],
+    seafood: ['seafood', 'fish', 'lobster'],
+    vegetarian: ['vegetarian', 'vegan', 'plant-based'],
+    mediterranean: ['mediterranean', 'greek', 'falafel'],
+    caribbean: ['caribbean', 'jamaican', 'jerk'],
     'soul food': ['soul food', 'southern'],
-    'deli': ['deli', 'sandwich', 'bagel'],
-    'cafe': ['cafe', 'coffee', 'bakery']
+    deli: ['deli', 'sandwich', 'bagel'],
+    cafe: ['cafe', 'coffee', 'bakery']
   };
 
   for (const [cuisine, keywords] of Object.entries(cuisines)) {
@@ -74,12 +77,11 @@ function extractRestaurantFilters(query) {
     }
   }
 
-  // Borough detection
   const boroughs = {
-    'Manhattan': ['manhattan', 'midtown', 'downtown', 'uptown', 'harlem', 'soho', 'tribeca'],
-    'Brooklyn': ['brooklyn', 'williamsburg', 'bushwick', 'dumbo'],
-    'Queens': ['queens', 'flushing', 'astoria', 'jackson heights'],
-    'Bronx': ['bronx'],
+    Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'harlem', 'soho', 'tribeca'],
+    Brooklyn: ['brooklyn', 'williamsburg', 'bushwick', 'dumbo'],
+    Queens: ['queens', 'flushing', 'astoria', 'jackson heights'],
+    Bronx: ['bronx'],
     'Staten Island': ['staten island']
   };
 
@@ -113,9 +115,8 @@ async function searchRestaurants(query) {
   }
 
   const filters = extractRestaurantFilters(query);
-  let mongoQuery = {};
+  const mongoQuery = {};
 
-  // Build MongoDB query
   if (filters.cuisine) {
     mongoQuery.cuisineDescription = { $regex: filters.cuisine, $options: 'i' };
   }
@@ -132,16 +133,19 @@ async function searchRestaurants(query) {
     mongoQuery.rating = { $gte: filters.minRating };
   }
 
-  // If no specific filters, do text search
+  // If no specific filters, do lightweight regex search based on remaining terms
   if (!filters.cuisine && !filters.borough) {
-    const searchTerms = query.toLowerCase().split(' ').filter(term => 
-      !['restaurant', 'restaurants', 'food', 'eat', 'good', 'best', 'where', 'to', 'the', 'a', 'in'].includes(term)
-    );
-    
+    const stop = new Set(['restaurant', 'restaurants', 'food', 'eat', 'good', 'best', 'where', 'to', 'the', 'a', 'in']);
+    const searchTerms = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(t => t && !stop.has(t));
+
     if (searchTerms.length > 0) {
+      const pattern = searchTerms.join('|');
       mongoQuery.$or = [
-        { Name: { $regex: searchTerms.join('|'), $options: 'i' } },
-        { cuisineDescription: { $regex: searchTerms.join('|'), $options: 'i' } }
+        { Name: { $regex: pattern, $options: 'i' } },
+        { cuisineDescription: { $regex: pattern, $options: 'i' } }
       ];
     }
   }
@@ -166,7 +170,6 @@ async function getRestaurantById(id) {
   if (!collection) return null;
 
   try {
-    const { ObjectId } = require('mongodb');
     return await collection.findOne({ _id: new ObjectId(id) });
   } catch (err) {
     console.error('Failed to get restaurant:', err.message);
@@ -282,6 +285,31 @@ function formatRestaurantDetails(restaurant) {
   return response;
 }
 
+// Graceful shutdown handler
+process.on('SIGINT', async () => {
+  await closeMongoDBConnection();
+  process.exit(0);
+});
+
+// Handle other termination signals
+process.on('SIGTERM', async () => {
+  await closeMongoDBConnection();
+  process.exit(0);
+});
+
+async function closeMongoDBConnection() {
+  if (mongoClient) {
+    try {
+      await mongoClient.close();
+      mongoClient = null;
+      restaurantsCollection = null;
+      console.log('✅ MongoDB connection closed');
+    } catch (err) {
+      console.error('❌ Error closing MongoDB connection:', err.message);
+    }
+  }
+}
+
 module.exports = {
   isRestaurantQuery,
   extractRestaurantFilters,
@@ -292,5 +320,6 @@ module.exports = {
   getRestaurantsByBorough,
   getRandomRestaurants,
   formatRestaurantResults,
-  formatRestaurantDetails
+  formatRestaurantDetails,
+  closeMongoDBConnection
 };

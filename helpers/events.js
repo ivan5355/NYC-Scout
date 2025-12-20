@@ -1,6 +1,12 @@
 const axios = require('axios');
 const https = require('https');
 
+const {
+  isRestaurantQuery,
+  searchRestaurants,
+  formatRestaurantResults,
+} = require('./restaurants');
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
@@ -16,6 +22,101 @@ const graphClient = axios.create({
 
 const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9vvx.json';
 const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json';
+
+/* =====================
+   WEBHOOK DM ENTRYPOINT
+===================== */
+async function handleDM(body) {
+  console.log('🚀 POST /instagram hit');
+
+  const entry = body?.entry?.[0];
+  const messaging = entry?.messaging?.[0];
+
+  if (!messaging || messaging.message?.is_echo) {
+    console.log('No message or echo, skipping');
+    return;
+  }
+
+  const senderId = messaging.sender?.id;
+  const text = messaging.message?.text;
+
+  if (!senderId || !text) return;
+
+  await processDM(senderId, text);
+}
+
+/* =====================
+   DM PROCESSING
+===================== */
+async function processDM(senderId, messageText) {
+  console.log(`Incoming DM from ${senderId}: ${messageText}`);
+
+  const lowerMsg = messageText.toLowerCase();
+  let reply = null;
+
+  // 1) Restaurants
+  if (isRestaurantQuery(messageText)) {
+    try {
+      console.log('Processing as restaurant query...');
+      const searchResult = await searchRestaurants(messageText);
+      reply = formatRestaurantResults(searchResult);
+    } catch (err) {
+      console.error('Restaurant search failed:', err.message);
+      reply = await safeGeminiFallback(messageText);
+    }
+
+    await sendInstagramMessage(senderId, reply);
+    return;
+  }
+
+  // 2) Events (keyword heuristic)
+  const eventKeywords = [
+    'event', 'concert', 'festival', 'parade', 'fair', 'show', 'happening',
+    "what's on", 'things to do'
+  ];
+  const boroughKeywords = ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten'];
+
+  const isEventQuery =
+    eventKeywords.some(k => lowerMsg.includes(k)) ||
+    boroughKeywords.some(b => lowerMsg.includes(b));
+
+  if (isEventQuery) {
+    try {
+      console.log('Processing as event query...');
+      const searchResult = await searchEvents(messageText);
+      reply = formatEventResults(searchResult);
+    } catch (err) {
+      console.error('Event search failed:', err.message);
+      reply = await safeGeminiFallback(messageText);
+    }
+
+    await sendInstagramMessage(senderId, reply);
+    return;
+  }
+
+  // 3) General Gemini
+  try {
+    console.log('Calling Gemini for general response...');
+    reply = await getGeminiResponse(messageText);
+  } catch (err) {
+    console.error('Gemini failed, using fallback');
+    reply = "Thanks for your message! We'll get back to you shortly.";
+  }
+
+  await sendInstagramMessage(senderId, reply);
+}
+
+async function safeGeminiFallback(messageText) {
+  try {
+    return await getGeminiResponse(messageText);
+  } catch {
+    return "Sorry — something went wrong. Try again!";
+  }
+}
+
+/* =====================
+   EVENT HELPERS
+===================== */
 
 // Convert 12-hour time to 24-hour format
 function parseTime12h(timeStr) {
@@ -36,6 +137,7 @@ function parseTime12h(timeStr) {
 // Fetch NYC permitted events
 async function fetchPermittedEvents() {
   const today = new Date().toISOString().split('T')[0];
+
   const response = await axios.get(NYC_PERMITTED_EVENTS_URL, {
     params: {
       '$where': `start_date_time >= '${today}'`,
@@ -58,7 +160,8 @@ async function fetchPermittedEvents() {
   }));
 }
 
-// Fetch NYC Parks events
+// Fetch NYC Parks events (NOTE: this assumes the URL returns JSON-like data; if it's truly RSS XML,
+// you'll need a parser like xml2js. Keeping your existing behavior here.)
 async function fetchParksEvents() {
   const response = await axios.get(NYC_PARKS_EVENTS_URL, { timeout: 10000 });
   const boroughMap = { M: 'Manhattan', B: 'Brooklyn', Q: 'Queens', X: 'Bronx', R: 'Staten Island' };
@@ -87,9 +190,16 @@ async function fetchParksEvents() {
 async function fetchAllEvents() {
   try {
     const [permitted, parks] = await Promise.all([
-      fetchPermittedEvents().catch(err => { console.error('Permitted events failed:', err.message); return []; }),
-      fetchParksEvents().catch(err => { console.error('Parks events failed:', err.message); return []; })
+      fetchPermittedEvents().catch(err => {
+        console.error('Permitted events failed:', err.message);
+        return [];
+      }),
+      fetchParksEvents().catch(err => {
+        console.error('Parks events failed:', err.message);
+        return [];
+      })
     ]);
+
     console.log(`Fetched ${permitted.length} permitted + ${parks.length} parks events`);
     return [...permitted, ...parks];
   } catch (err) {
@@ -117,11 +227,18 @@ function extractFiltersFromQuery(query) {
     saturday.setDate(today.getDate() + daysUntilSat);
     const sunday = new Date(saturday);
     sunday.setDate(saturday.getDate() + 1);
-    filters.date = { type: 'range', start_date: saturday.toISOString().split('T')[0], end_date: sunday.toISOString().split('T')[0] };
+    filters.date = {
+      type: 'range',
+      start_date: saturday.toISOString().split('T')[0],
+      end_date: sunday.toISOString().split('T')[0]
+    };
   }
 
   // Month handling
-  const months = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12 };
+  const months = {
+    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+  };
   for (const [name, num] of Object.entries(months)) {
     if (queryLower.includes(name)) {
       let year = today.getFullYear();
@@ -144,6 +261,7 @@ function extractFiltersFromQuery(query) {
     kids: ['kids', 'children', 'family'],
     theater: ['theater', 'theatre', 'play', 'broadway']
   };
+
   for (const [cat, keywords] of Object.entries(categories)) {
     if (keywords.some(k => queryLower.includes(k))) {
       filters.category = cat;
@@ -159,6 +277,7 @@ function extractFiltersFromQuery(query) {
     Bronx: ['bronx'],
     'Staten Island': ['staten island', 'staten']
   };
+
   for (const [borough, keywords] of Object.entries(boroughs)) {
     if (keywords.some(k => queryLower.includes(k))) {
       filters.borough = borough;
@@ -203,6 +322,7 @@ function applyFilters(events, filters) {
       theater: ['theater', 'theatre', 'play', 'broadway', 'drama']
     };
     const keywords = categoryKeywords[filters.category] || [filters.category];
+
     results = results.filter(event => {
       const eventType = (event.event_type || '').toLowerCase();
       const eventName = (event.event_name || '').toLowerCase();
@@ -216,7 +336,6 @@ function applyFilters(events, filters) {
 
   return results;
 }
-
 
 // Use Gemini AI to parse complex queries
 async function extractFiltersWithGemini(query) {
@@ -237,6 +356,7 @@ Only return valid JSON, no explanation.`;
       { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200, temperature: 0.1 } },
       { params: { key: GEMINI_API_KEY } }
     );
+
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     if (text.startsWith('```')) {
       text = text.split('\n').slice(1).join('\n').replace(/```$/, '').trim();
@@ -261,6 +381,7 @@ async function getGeminiResponse(userMessage) {
       },
       { params: { key: GEMINI_API_KEY } }
     );
+
     return response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'Thanks for reaching out!';
   } catch (err) {
     console.error('Gemini error:', err.message);
@@ -270,32 +391,44 @@ async function getGeminiResponse(userMessage) {
 
 // Main search function
 async function searchEvents(query) {
-  const [filters, events] = await Promise.all([extractFiltersWithGemini(query), fetchAllEvents()]);
+  const [filters, events] = await Promise.all([
+    extractFiltersWithGemini(query),
+    fetchAllEvents()
+  ]);
+
   const results = applyFilters(events, filters);
   return { query, filters, results, count: results.length };
 }
 
 // Format event results for Instagram
 function formatEventResults(searchResult) {
-  if (searchResult.count === 0) return "I couldn't find any events matching your search. Try a different date, category, or borough!";
+  if (searchResult.count === 0) {
+    return "I couldn't find any events matching your search. Try a different date, category, or borough!";
+  }
 
   const events = searchResult.results.slice(0, 5);
   let response = `Found ${searchResult.count} event${searchResult.count > 1 ? 's' : ''}! Here are the top results:\n\n`;
+
   events.forEach((e, i) => {
     response += `${i + 1}. ${e.event_name || 'Unnamed Event'}\n`;
     if (e.start_date_time) response += `   📅 ${e.start_date_time.split('T')[0]}\n`;
     if (e.event_location) response += `   📍 ${e.event_location}\n`;
     if (e.event_borough) response += `   🏙️ ${e.event_borough}\n`;
   });
+
   return response;
 }
 
 // Send Instagram message
 async function sendInstagramMessage(recipientId, text) {
-  if (!PAGE_ACCESS_TOKEN) { console.error('PAGE_ACCESS_TOKEN missing'); return; }
+  if (!PAGE_ACCESS_TOKEN) {
+    console.error('PAGE_ACCESS_TOKEN missing');
+    return;
+  }
 
   try {
-    await graphClient.post('https://graph.facebook.com/v18.0/me/messages',
+    await graphClient.post(
+      'https://graph.facebook.com/v18.0/me/messages',
       { recipient: { id: recipientId }, message: { text } },
       { params: { access_token: PAGE_ACCESS_TOKEN } }
     );
@@ -306,9 +439,11 @@ async function sendInstagramMessage(recipientId, text) {
 }
 
 module.exports = {
+  // webhook
+  handleDM,
+
+  // events API
   fetchAllEvents,
   searchEvents,
   formatEventResults,
-  getGeminiResponse,
-  sendInstagramMessage
 };

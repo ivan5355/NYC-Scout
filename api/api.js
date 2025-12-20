@@ -3,19 +3,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
 
-const {
-  fetchAllEvents,
-  searchEvents,
-  formatEventResults,
-  getGeminiResponse,
-  sendInstagramMessage
-} = require('./helpers');
-
-const {
-  isRestaurantQuery,
-  searchRestaurants,
-  formatRestaurantResults,
-} = require('./restaurantHelpers');
+const { handleDM, fetchAllEvents, searchEvents } = require('./helpers/events');
 
 const app = express();
 app.use(bodyParser.json());
@@ -68,75 +56,14 @@ app.get('/instagram', (req, res) => {
    WEBHOOK RECEIVE
 ===================== */
 app.post('/instagram', async (req, res) => {
-  console.log('🚀 POST /instagram hit');
-
-  const entry = req.body.entry?.[0];
-  const messaging = entry?.messaging?.[0];
-
-  if (!messaging || messaging.message?.is_echo) {
-    console.log('No message or echo, skipping');
-    return res.sendStatus(200);
+  try {
+    await handleDM(req.body);
+  } catch (err) {
+    console.error('handleDM failed:', err.message);
+    // Still 200 so Meta doesn't keep retrying
   }
-
-  const senderId = messaging.sender?.id;
-  const text = messaging.message?.text;
-
-  if (!senderId || !text) {
-    return res.sendStatus(200);
-  }
-
-  await processDM(senderId, text);
   res.sendStatus(200);
 });
-
-/* =====================
-   DM PROCESSING
-===================== */
-async function processDM(senderId, messageText) {
-  console.log(`Incoming DM from ${senderId}: ${messageText}`);
-
-  let reply;
-  const lowerMsg = messageText.toLowerCase();
-
-  // Check if user is asking about restaurants
-  if (isRestaurantQuery(messageText)) {
-    try {
-      console.log('Processing as restaurant query...');
-      const searchResult = await searchRestaurants(messageText);
-      reply = formatRestaurantResults(searchResult);
-    } catch (err) {
-      console.error('Restaurant search failed:', err.message);
-      reply = await getGeminiResponse(messageText);
-    }
-  }
-  // Check if user is asking about events
-  else {
-    const eventKeywords = ['event', 'concert', 'festival', 'parade', 'fair', 'show', 'happening', "what's on", 'things to do'];
-    const isEventQuery = eventKeywords.some(k => lowerMsg.includes(k)) ||
-                         ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten'].some(b => lowerMsg.includes(b));
-
-    if (isEventQuery) {
-      try {
-        console.log('Processing as event query...');
-        const searchResult = await searchEvents(messageText);
-        reply = formatEventResults(searchResult);
-      } catch (err) {
-        console.error('Event search failed:', err.message);
-        reply = await getGeminiResponse(messageText);
-      }
-    } else {
-      try {
-        console.log('Calling Gemini for general response...');
-        reply = await getGeminiResponse(messageText);
-      } catch (err) {
-        console.error('Gemini failed, using fallback');
-        reply = "Thanks for your message! We'll get back to you shortly.";
-      }
-    }
-  }
-
-  await sendInstagramMessage(senderId, reply);
-}
 
 /* =====================
    SERVER START
