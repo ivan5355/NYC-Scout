@@ -3,7 +3,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const fs = require('fs');
 
-const { handleDM, fetchAllEvents, searchEvents } = require('./helpers/events');
+const { handleDM, fetchAllEvents, searchEvents } = require('../helpers/events');
 
 const app = express();
 app.use(bodyParser.json());
