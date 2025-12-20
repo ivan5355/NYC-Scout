@@ -46,13 +46,14 @@
    
    - `APP_SECRET` - Found in Settings → Basic of your Facebook app
    - `TOKEN` - The verify token you generated earlier
-   - `GEMINI_KEY` - Your Google Gemini API key
+   - `GEMINI_API_KEY` - Your Google Gemini API key
    - `PAGE_ACCESS_TOKEN` - Get this from Facebook Graph Explorer:
      - Go to [Graph Explorer](https://developers.facebook.com/tools/explorer/)
      - Select your app and user token
      - Add permissions: `pages_show_list`, `pages_manage_metadata`, `pages_messaging`, `instagram_basic`, `instagram_manage_messages`
      - Click "Generate Access Token"
      - Type `me/accounts` and hit submit to get your page access token
+   - `MONGODB_URI` - MongoDB connection string (required for restaurant answers)
 
 3. **Update webhook URL** in your Facebook app to point to your new Vercel deployment URL
 
@@ -69,26 +70,30 @@ vercel
 ## Architecture
 
 ```
-Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js → Response
+Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restaurantHelpers.js → Response
 ```
 
 ## File Structure
 
 - **`api/api.js`** - Express routes and webhook handlers
 - **`api/helpers.js`** - Event fetching, filtering, and AI functions
+- **`api/restaurantHelpers.js`** - MongoDB-backed restaurant search and formatting
 
 ## Flow
 
 1. **User sends DM** to your Instagram account
 2. **Facebook webhook** delivers the message to `POST /instagram`
-3. **Query detection** checks if the message is about NYC events (keywords like "concert", "brooklyn", "this weekend")
-4. **If event query:**
+3. **Query detection** checks if the message is about restaurants or NYC events
+4. **If restaurant query:**
+   - Uses MongoDB (`MONGODB_URI`) to search the `nyc-events.restaurants` collection
+   - Formats and returns the top matches
+5. **If event query:**
    - Fetches live data from NYC Open Data API + NYC Parks API
    - Uses Gemini AI to parse natural language into filters (date, category, borough)
    - Filters events and returns top 5 matches
-5. **If general message:**
+6. **If general message:**
    - Sends to Gemini for a conversational response
-6. **Response sent** back to user via Instagram DM
+7. **Response sent** back to user via Instagram DM
 
 ## Data Sources
 
@@ -103,6 +108,8 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js → Respons
 - "Any parades in Manhattan?"
 - "Events in Queens tomorrow"
 - "Show me festivals in December"
+- "Best sushi in Manhattan"
+- "Any cheap pizza spots in Brooklyn?"
 
 ## API Endpoints
 
