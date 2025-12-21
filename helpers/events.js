@@ -237,17 +237,20 @@ async function searchEventsWithGeminiWebSearch(query, filters) {
     if (filters.date) searchContext += `Date criteria: ${JSON.stringify(filters.date)}\n`;
     if (filters.searchTerm) searchContext += `Search term: ${filters.searchTerm}\n`;
 
-    const prompt = `Find current or upcoming events in NYC based on the following criteria:\n\n${searchContext}\n` +
-      `Use Google Search to provide real-time information. ` +
-      `If you find specific events, list 1-3 of them with dates and locations. ` +
-      `Keep the response short, friendly, and conversational for an Instagram DM.`;
+    const prompt = `You are a helpful NYC assistant. A user is looking for events: "${query}"\n` +
+      `Context: ${JSON.stringify(filters)}\n\n` +
+      `Use your Google Search tool to find actual, real-time events in NYC that match this request. ` +
+      `Do NOT say "I will search" or "Searching for". Instead, provide a list of matching events directly. ` +
+      `For each event, include the name, date, and location. ` +
+      `If no events are found, just say you couldn't find any. ` +
+      `Keep the tone friendly and the response concise for an Instagram DM.`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 500, temperature: 0.1 }
+        generationConfig: { maxOutputTokens: 800, temperature: 0.1 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
@@ -271,7 +274,7 @@ async function searchEvents(query) {
 
   // FALLBACK: If no results found in local APIs, use Gemini Web Search
   if (results.length === 0 && GEMINI_API_KEY) {
-    console.log('🔍 No local events found. Falling back to Gemini Web Search...');
+    console.log('No local events found. Falling back to Gemini Web Search...');
     const webSearchResults = await searchEventsWithGeminiWebSearch(query, filters);
     if (webSearchResults) {
       return { query, filters, results: [], count: 0, webSearchResponse: webSearchResults };
