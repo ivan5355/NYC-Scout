@@ -1,5 +1,7 @@
 const axios = require('axios');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const {
   isRestaurantQuery,
@@ -208,86 +210,6 @@ async function fetchAllEvents() {
   }
 }
 
-// Extract filters from natural language queries
-function extractFiltersFromQuery(query) {
-  console.log('🔍 Executing extractFiltersFromQuery (Heuristic fallback)...');
-  const queryLower = query.toLowerCase();
-  const filters = {};
-  const today = new Date();
-
-  // Date handling
-  if (queryLower.includes('today')) {
-    filters.date = { type: 'specific', date: today.toISOString().split('T')[0] };
-  } else if (queryLower.includes('tomorrow')) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    filters.date = { type: 'specific', date: tomorrow.toISOString().split('T')[0] };
-  } else if (queryLower.includes('weekend')) {
-    const daysUntilSat = (6 - today.getDay()) % 7;
-    const saturday = new Date(today);
-    saturday.setDate(today.getDate() + daysUntilSat);
-    const sunday = new Date(saturday);
-    sunday.setDate(saturday.getDate() + 1);
-    filters.date = {
-      type: 'range',
-      start_date: saturday.toISOString().split('T')[0],
-      end_date: sunday.toISOString().split('T')[0]
-    };
-  }
-
-  // Month handling
-  const months = {
-    january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
-    july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
-  };
-  for (const [name, num] of Object.entries(months)) {
-    if (queryLower.includes(name)) {
-      let year = today.getFullYear();
-      if (num < today.getMonth() + 1) year++;
-      filters.date = { type: 'month', month: num, year };
-      break;
-    }
-  }
-
-  // Category handling
-  const categories = {
-    concert: ['concert', 'music', 'performance', 'show'],
-    festival: ['festival', 'fest', 'celebration'],
-    sports: ['sports', 'game', 'match', 'race', 'marathon'],
-    parade: ['parade', 'march'],
-    fair: ['fair', 'street fair', 'block party'],
-    movie: ['movie', 'film', 'screening'],
-    art: ['art', 'exhibition', 'gallery'],
-    fitness: ['fitness', 'yoga', 'workout'],
-    kids: ['kids', 'children', 'family'],
-    theater: ['theater', 'theatre', 'play', 'broadway']
-  };
-
-  for (const [cat, keywords] of Object.entries(categories)) {
-    if (keywords.some(k => queryLower.includes(k))) {
-      filters.category = cat;
-      break;
-    }
-  }
-
-  // Borough handling
-  const boroughs = {
-    Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'central park'],
-    Brooklyn: ['brooklyn', 'bk', 'prospect park'],
-    Queens: ['queens', 'flushing', 'astoria'],
-    Bronx: ['bronx'],
-    'Staten Island': ['staten island', 'staten']
-  };
-
-  for (const [borough, keywords] of Object.entries(boroughs)) {
-    if (keywords.some(k => queryLower.includes(k))) {
-      filters.borough = borough;
-      break;
-    }
-  }
-
-  return filters;
-}
 
 // Apply filters to event list
 function applyFilters(events, filters) {
@@ -314,21 +236,32 @@ function applyFilters(events, filters) {
     const categoryKeywords = {
       concert: ['concert', 'music', 'performance', 'live'],
       festival: ['festival', 'fest', 'celebration'],
-      sports: ['sports', 'athletic', 'race', 'marathon', 'run'],
+      sports: ['sports', 'athletic', 'race', 'marathon', 'run', 'sport'],
       parade: ['parade', 'march', 'procession'],
       fair: ['fair', 'street fair', 'block party', 'market'],
       movie: ['movie', 'film', 'screening', 'cinema'],
-      art: ['art', 'exhibition', 'gallery', 'museum'],
+      art: ['art', 'exhibition', 'gallery', 'museum', 'arts'],
       fitness: ['fitness', 'yoga', 'workout', 'exercise', 'health'],
       kids: ['kids', 'children', 'family', 'youth'],
-      theater: ['theater', 'theatre', 'play', 'broadway', 'drama']
+      theater: ['theater', 'theatre', 'play', 'broadway', 'drama'],
+      nature: ['nature', 'birding', 'wildlife', 'garden', 'stewardship', 'outdoor'],
+      volunteer: ['volunteer', 'cleanup', "it's my park", 'stewardship']
     };
+
+    // If the category is from our dynamic list (Gemini-assigned), search for it directly.
+    // Otherwise, use the keyword mapping.
     const keywords = categoryKeywords[filters.category] || [filters.category];
 
     results = results.filter(event => {
       const eventType = (event.event_type || '').toLowerCase();
       const eventName = (event.event_name || '').toLowerCase();
-      return keywords.some(k => eventType.includes(k) || eventName.includes(k));
+      const eventLocation = (event.event_location || '').toLowerCase();
+
+      return keywords.some(k =>
+        eventType.includes(k.toLowerCase()) ||
+        eventName.includes(k.toLowerCase()) ||
+        eventLocation.includes(k.toLowerCase())
+      );
     });
   }
 
@@ -342,19 +275,37 @@ function applyFilters(events, filters) {
 // Use Gemini AI to parse complex queries
 async function extractFiltersWithGemini(query) {
   if (!GEMINI_API_KEY) {
-    console.log('⚠️ GEMINI_API_KEY missing, falling back to heuristic extraction.');
-    return extractFiltersFromQuery(query);
+    console.log('⚠️ GEMINI_API_KEY missing, returning empty filters.');
+    return {};
   }
 
   console.log('🤖 Executing extractFiltersWithGemini...');
+
+  let categories = ['concert', 'festival', 'sports', 'parade', 'fair', 'movie', 'art', 'fitness', 'kids', 'theater', 'nature', 'volunteer'];
+  let boroughs = ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island'];
+
+  try {
+    const filtersPath = path.join(__dirname, '../data/event_filters.json');
+    if (fs.existsSync(filtersPath)) {
+      const filtersData = JSON.parse(fs.readFileSync(filtersPath, 'utf8'));
+      const combinedCats = [
+        ...filtersData.parks_events.categories,
+        ...filtersData.permitted_events.event_type
+      ];
+      categories = [...new Set(combinedCats)].sort();
+      boroughs = filtersData.permitted_events.event_borough;
+    }
+  } catch (err) {
+    console.error('Failed to load dynamic filters:', err.message);
+  }
 
   const today = new Date().toISOString().split('T')[0];
   const prompt = `Extract event search filters from this query. Today's date is ${today}.
 Query: "${query}"
 Return a JSON object with these fields (only include fields that are mentioned):
 - date: object with "type" (specific/range/month) and relevant date fields
-- category: one of [concert, festival, sports, parade, fair, movie, art, fitness, kids, theater]
-- borough: one of [Manhattan, Brooklyn, Queens, Bronx, Staten Island]
+- category: pick the best fit from [${categories.join(', ')}]
+- borough: one of [${boroughs.join(', ')}]
 Only return valid JSON, no explanation.`;
 
   try {
@@ -371,7 +322,7 @@ Only return valid JSON, no explanation.`;
     return JSON.parse(text);
   } catch (err) {
     console.error('Gemini filter extraction failed:', err.message);
-    return extractFiltersFromQuery(query);
+    return {};
   }
 }
 
