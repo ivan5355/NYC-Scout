@@ -17,10 +17,10 @@ try {
   const filtersPath = path.join(__dirname, '..', 'data', 'restaurant_filters.json');
   if (fs.existsSync(filtersPath)) {
     CUISINE_TYPES = JSON.parse(fs.readFileSync(filtersPath, 'utf8'));
-    console.log('✅ Loaded restaurant filters from restaurant_filters.json');
+    console.log('Loaded restaurant filters from restaurant_filters.json');
   }
 } catch (err) {
-  console.warn('⚠️  Could not load restaurant_filters.json, using hardcoded filters:', err.message);
+  console.warn('Could not load restaurant_filters.json, using hardcoded filters:', err.message);
 }
 
 
@@ -48,7 +48,7 @@ async function connectToMongoDB() {
     await mongoClient.connect();
     const db = mongoClient.db('nyc-events');
     restaurantsCollection = db.collection('restaurants');
-    console.log('✅ Connected to MongoDB restaurants collection');
+    console.log('Connected to MongoDB restaurants collection');
     return restaurantsCollection;
   } catch (err) {
     console.error('Failed to connect to MongoDB:', err.message);
@@ -126,7 +126,7 @@ async function extractRestaurantFiltersWithGemini(query) {
     return extractRestaurantFilters(query);
   }
 
-  console.log('🤖 Executing extractRestaurantFiltersWithGemini...');
+  console.log('Executing extractRestaurantFiltersWithGemini...');
 
   const availableCuisines = Object.keys(CUISINE_TYPES?.cuisines || {}).slice(0, 100).join(', ');
   const availableBoroughs = Object.keys(CUISINE_TYPES?.boroughs || {}).join(', ');
@@ -159,7 +159,7 @@ Return ONLY a valid JSON object.`;
       text = text.split('\n').slice(1).join('\n').replace(/```$/, '').trim();
     }
     const filters = JSON.parse(text);
-    console.log('🤖 Gemini extracted restaurant filters:', filters);
+    console.log('Gemini extracted restaurant filters:', filters);
     return filters;
   } catch (err) {
     console.error('Gemini restaurant filter extraction failed:', err.message);
@@ -175,7 +175,7 @@ async function searchRestaurants(query, preExtractedFilters = null) {
   }
 
   const filters = preExtractedFilters || await extractRestaurantFiltersWithGemini(query);
-  console.log('🛠️ Applying filters to MongoDB query:', JSON.stringify(filters, null, 2));
+  console.log('Applying filters to MongoDB query:', JSON.stringify(filters, null, 2));
   const mongoQuery = {};
 
   if (filters.cuisine) {
@@ -226,7 +226,7 @@ async function searchRestaurants(query, preExtractedFilters = null) {
       .limit(10) // Limit to 10 for Instagram
       .toArray();
 
-    console.log(`✅ Search complete. Found ${results.length} restaurants matching query.`);
+    console.log(`Search complete. Found ${results.length} restaurants matching query.`);
     return { query, filters, results, count: results.length };
   } catch (err) {
     console.error('MongoDB restaurant search failed:', err.message);
@@ -247,23 +247,23 @@ function formatRestaurantResults(searchResult) {
     const name = r.Name?.length > 50 ? r.Name.substring(0, 47) + '...' : (r.Name || 'Unknown');
     response += `${i + 1}. ${name}\n`;
 
-    if (r.cuisineDescription) response += `   🍽️ ${r.cuisineDescription}\n`;
-    if (r.rating) response += `   ⭐ ${r.rating}/5\n`;
+    if (r.cuisineDescription) response += `   Cuisine: ${r.cuisineDescription}\n`;
+    if (r.rating) response += `   Rating: ${r.rating}/5\n`;
 
     if (r.priceLevel) {
       const priceMap = { 'Inexpensive': '$', 'Moderate': '$$', 'Expensive': '$$$', 'Very Expensive': '$$$$', 'Free': 'Free' };
       const priceDisplay = typeof r.priceLevel === 'number' ? '$'.repeat(r.priceLevel) : (priceMap[r.priceLevel] || r.priceLevel);
-      response += `   💰 ${priceDisplay}\n`;
+      response += `   Price: ${priceDisplay}\n`;
     }
 
     if (r.fullAddress) {
       const addr = r.fullAddress.length > 60 ? r.fullAddress.substring(0, 57) + '...' : r.fullAddress;
-      response += `   📍 ${addr}\n`;
+      response += `   Address: ${addr}\n`;
     }
 
     if (r.reviewSummary) {
       const summary = r.reviewSummary.length > 80 ? r.reviewSummary.substring(0, 77) + '...' : r.reviewSummary;
-      response += `   💬 "${summary}"\n`;
+      response += `   Review: "${summary}"\n`;
     }
     response += '\n';
   });

@@ -28,7 +28,7 @@
 
 # Deploy to Vercel
 
-> ⚠️ **Important:** Vercel automatically deploys from your main branch. Every time you push changes to GitHub, your production app will update immediately. 
+> **Important:** Vercel automatically deploys from your main branch. Every time you push changes to GitHub, your production app will update immediately. 
 
 ## Quick Deploy
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/YOUR_REPO_NAME)
@@ -168,13 +168,19 @@ Supported fields extracted by Gemini:
 - **Cuisine**: Matches the user's intent to one of 100+ detected cuisines.
 - **Borough**: Validates against the 5 NYC boroughs.
 - **Price Level**: Maps "cheap", "fancy", etc., to "Inexpensive", "Expensive", etc.
-- **Search Term**: Captures specific names (e.g., "Lucali") or food items.
+- **Search Term**: Captures specific names (e.g., "Lucali"), food items (e.g., "shrimp"), or neighborhoods. It acts as a catch-all for terms that don't fit into broad categories.
 
 ### Event Search Filters
 Supported fields extracted by Gemini:
 - **Date**: Handles specific dates, ranges, or months.
 - **Category**: Maps query to real NYC event types (e.g., "Concerts", "Street Event").
-- **Search Term**: Captures keywords for fuzzy matching across name and location.
+- **Search Term**: Captures specific keywords (e.g., "Yoga", "Jazz", "Central Park") for fuzzy matching across name, type, and location.
+
+### How searchTerm Works
+The `searchTerm` is the logic that makes the bot flexible. Instead of only matching exact categories, it performs a broad text search:
+- **For Restaurants**: It scans the restaurant's **Name**, **Cuisine Type**, and **Review Summary** in the database.
+- **For Events**: It scans the **Event Name**, **Event Type**, and **Location** fields in the NYC API data.
+- **As a Fallback**: If Gemini cannot find a matching borough or official category, it puts the user's keywords into the `searchTerm` to try and find a match anyway.
 
 ### Example Queries
 

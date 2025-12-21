@@ -108,9 +108,9 @@ async function sendInstagramMessage(recipientId, text) {
             { recipient: { id: recipientId }, message: { text: safeText } },
             { params: { access_token: PAGE_ACCESS_TOKEN } }
         );
-        console.log(`✅ Reply sent to ${recipientId}`);
+        console.log(`Reply sent to ${recipientId}`);
     } catch (err) {
-        console.error('❌ Send failed:', err.response?.data || err.message);
+        console.error('Send failed:', err.response?.data || err.message);
     }
 }
 

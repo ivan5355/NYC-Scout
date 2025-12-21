@@ -5,7 +5,7 @@ const path = require('path');
 // Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!MONGODB_URI) {
-    console.error('❌ MONGODB_URI or MONGO_URI environment variable is required');
+    console.error('MONGODB_URI or MONGO_URI environment variable is required');
     process.exit(1);
 }
 
@@ -88,9 +88,9 @@ async function extractFiltersFromMongoDB() {
         const outputPath = path.join(__dirname, '..', 'data', 'restaurant_filters.json');
         fs.writeFileSync(outputPath, JSON.stringify(filters, null, 2));
 
-        console.log('\n✅ Filter extraction complete!');
-        console.log(`📁 Saved to: ${outputPath}`);
-        console.log(`\n📊 Summary:`);
+        console.log('\nFilter extraction complete!');
+        console.log(`Saved to: ${outputPath}`);
+        console.log(`\nSummary:`);
         console.log(`   - Total Restaurants: ${filters.totalRestaurants}`);
         console.log(`   - Unique Cuisines: ${Object.keys(cuisineMapping).length}`);
         console.log(`   - Boroughs: ${Object.keys(boroughMapping).length}`);
@@ -100,12 +100,12 @@ async function extractFiltersFromMongoDB() {
         return filters;
 
     } catch (error) {
-        console.error('❌ Error extracting filters:', error);
+        console.error('Error extracting filters:', error);
         throw error;
     } finally {
         if (client) {
             await client.close();
-            console.log('\n🔌 MongoDB connection closed');
+            console.log('\nMongoDB connection closed');
         }
     }
 }

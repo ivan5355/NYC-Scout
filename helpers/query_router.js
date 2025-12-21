@@ -16,7 +16,7 @@ const geminiClient = axios.create({
 async function classifyQuery(text) {
     if (!GEMINI_API_KEY) return 'OTHER';
 
-    console.log(`🤖 Classifying query: "${text}"`);
+    console.log(`Classifying query: "${text}"`);
 
     const prompt = `Classify this user request into one of these categories:
 - RESTAURANT: user is looking for food, places to eat, specific cuisines, or dining recommendations.

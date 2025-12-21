@@ -122,7 +122,7 @@ async function fetchAllEvents() {
 
 // Apply filters to event list
 function applyFilters(events, filters) {
-  console.log('🛠️ Applying filters to event list:', JSON.stringify(filters, null, 2));
+  console.log('Applying filters to event list:', JSON.stringify(filters, null, 2));
   let results = [...events];
 
   if (filters.date) {
@@ -178,7 +178,7 @@ async function extractFiltersWithGemini(query) {
     return {};
   }
 
-  console.log('🤖 Executing extractFiltersWithGemini...');
+  console.log('Executing extractFiltersWithGemini...');
 
   let categories = [];
   let boroughs = [];
@@ -250,12 +250,7 @@ async function getGeminiResponse(userMessage) {
   }
 }
 
-/**
- * Uses Gemini's Web Search (Google Search grounding) to find events.
- * @param {string} query The original user query
- * @param {object} filters The filters extracted from the query
- * @returns {Promise<string|null>} A conversational response or null
- */
+// Use Gemini Web Search to find events
 async function searchEventsWithGeminiWebSearch(query, filters) {
   if (!GEMINI_API_KEY) return null;
 
@@ -296,7 +291,7 @@ async function searchEvents(query) {
   ]);
 
   const results = applyFilters(events, filters);
-  console.log(`✅ Event search complete. Found ${results.length} events matching query.`);
+  console.log(`Event search complete. Found ${results.length} events matching query.`);
 
   // FALLBACK: If no results found in local APIs, use Gemini Web Search
   if (results.length === 0 && GEMINI_API_KEY) {
@@ -328,14 +323,14 @@ function formatEventResults(searchResult) {
     const name = e.event_name?.length > 70 ? e.event_name.substring(0, 67) + '...' : (e.event_name || 'Unnamed Event');
     response += `${i + 1}. ${name}\n`;
 
-    if (e.start_date_time) response += `   📅 ${e.start_date_time.split('T')[0]}\n`;
+    if (e.start_date_time) response += `   Date: ${e.start_date_time.split('T')[0]}\n`;
 
     if (e.event_location) {
       const loc = e.event_location.length > 70 ? e.event_location.substring(0, 67) + '...' : e.event_location;
-      response += `   📍 ${loc}\n`;
+      response += `   Loc: ${loc}\n`;
     }
 
-    if (e.event_borough) response += `   🏙️ ${e.event_borough}\n`;
+    if (e.event_borough) response += `   Borough: ${e.event_borough}\n`;
   });
 
   return response;
