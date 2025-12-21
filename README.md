@@ -69,9 +69,20 @@ vercel
 
 ## Architecture
 
+```bash
+Instagram DM → Facebook Webhook → Vercel (api.js) → helpers/query_router.js → helpers/events.js OR helpers/restaurants.js → Response
 ```
-Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restaurantHelpers.js → Response
-```
+
+## Data Sets
+
+The application aggregates real-time data from official NYC agencies:
+
+- **NYC Permitted Events**: Live data on parades, street fairs, block parties, and film shoots.
+  - Source: [NYC Open Data - NYC Permitted Event Listings](https://data.cityofnewyork.us/City-Government/NYC-Permitted-Event-Listings/tvpp-9vvx)
+- **NYC Parks Events**: Live feed of activities including concerts, tours, kids programs, and fitness classes in NYC parks.
+  - Source: [NYC Parks - Events RSS Feed](https://www.nycgovparks.org/events/rss)
+- **NYC Restaurants**: Snapshot of NYC restaurants with cuisine types, boroughs, and health-related metadata.
+  - Source: [NYC DOHMH Restaurant Inspections](https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j) (Managed via MongoDB)
 
 ## File Structure
 
@@ -79,7 +90,7 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restauran
 - **`helpers/query_router.js`** - AI-powered intent classifier (RESTAURANT vs EVENT vs GENERAL)
 - **`helpers/events.js`** - Event fetching, filtering, and AI search extraction
 - **`helpers/restaurants.js`** - MongoDB-backed restaurant search and AI extraction
-- **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` (dynamic caches)
+- **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` 
 - **`scripts/`** - Data extraction scripts for populating/refreshing filters
 
 ## Flow
@@ -95,10 +106,9 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restauran
 
 ## Filtering System
 
-The application uses a **Dynamic Filtering System**. Instead of hardcoding categories, it extracts valid values directly from the sources and uses Gemini to map user queries to them.
+The app extracts valid filters directly from the sources and uses Gemini to map user queries to those filters.
 
-### Extraction Scripts
-Before running the app (or to update filters), run these scripts:
+### Extraction Scripts - Gets the filters from the sources and writes them to a file
 - `node scripts/extract_restaurant_filters.js`: Scans restaurant data to find all cuisines and boroughs.
 - `node scripts/extract_event_filters.js`: Scans NYC Open Data to find active event categories and boroughs.
 
