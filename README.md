@@ -111,6 +111,44 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
                          (Powered by Gemini)
 ```   
 
+## Data Flow Diagram
+
+```text
+[ Instagram Webhook POST /instagram ]
+                |
+                v
+          api/api.js
+                |
+                v
+        handleDM(request.body)
+                |
+                v
+        message_handler.processDM(senderId, text)
+                |
+                v
+          query_router.classifyQuery(text)
+                |
+                +-------------------+
+                |                   |
+          "RESTAURANT"          "EVENT"
+                |                   |
+                v                   v
+   helpers/restaurants.js   helpers/events.js
+   searchRestaurants()      searchEvents()
+   formatRestaurantResults  formatEventResults()
+                |                   |
+                \___________________/
+                         |
+                         v
+            sendInstagramMessage(senderId, reply)
+                         |
+                         v
+            Instagram Graph API (POST /me/messages)
+```
+
+*Note: Event queries may fall back to Gemini Web Search when no local results are found; restaurant queries do not use web search fallback.*
+   
+
 ## Data Sources
 
 The application uses multiple data sources with intelligent fallbacks:
