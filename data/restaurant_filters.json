@@ -1,0 +1,325 @@
+{
+  "cuisines": {
+    "Afghan": [
+      "afghan"
+    ],
+    "African": [
+      "african"
+    ],
+    "American": [
+      "american"
+    ],
+    "Armenian": [
+      "armenian"
+    ],
+    "Asian/Asian Fusion": [
+      "asian/asian fusion"
+    ],
+    "Australian": [
+      "australian"
+    ],
+    "Bagels/Pretzels": [
+      "bagels/pretzels"
+    ],
+    "Bakery Products/Desserts": [
+      "bakery products/desserts"
+    ],
+    "Bangladeshi": [
+      "bangladeshi"
+    ],
+    "Barbecue": [
+      "barbecue"
+    ],
+    "Basque": [
+      "basque"
+    ],
+    "Bottled Beverages": [
+      "bottled beverages"
+    ],
+    "Brazilian": [
+      "brazilian"
+    ],
+    "Cajun": [
+      "cajun"
+    ],
+    "Californian": [
+      "californian"
+    ],
+    "Caribbean": [
+      "caribbean"
+    ],
+    "Chicken": [
+      "chicken"
+    ],
+    "Chilean": [
+      "chilean"
+    ],
+    "Chimichurri": [
+      "chimichurri"
+    ],
+    "Chinese": [
+      "chinese"
+    ],
+    "Chinese/Cuban": [
+      "chinese/cuban"
+    ],
+    "Chinese/Japanese": [
+      "chinese/japanese"
+    ],
+    "Coffee/Tea": [
+      "coffee/tea"
+    ],
+    "Continental": [
+      "continental"
+    ],
+    "Creole": [
+      "creole"
+    ],
+    "Creole/Cajun": [
+      "creole/cajun"
+    ],
+    "Czech": [
+      "czech"
+    ],
+    "Donuts": [
+      "donuts"
+    ],
+    "Eastern European": [
+      "eastern european"
+    ],
+    "Egyptian": [
+      "egyptian"
+    ],
+    "English": [
+      "english"
+    ],
+    "Ethiopian": [
+      "ethiopian"
+    ],
+    "Filipino": [
+      "filipino"
+    ],
+    "French": [
+      "french"
+    ],
+    "Frozen Desserts": [
+      "frozen desserts"
+    ],
+    "Fruits/Vegetables": [
+      "fruits/vegetables"
+    ],
+    "Fusion": [
+      "fusion"
+    ],
+    "German": [
+      "german"
+    ],
+    "Greek": [
+      "greek"
+    ],
+    "Hamburgers": [
+      "hamburgers"
+    ],
+    "Haute Cuisine": [
+      "haute cuisine"
+    ],
+    "Hawaiian": [
+      "hawaiian"
+    ],
+    "Hotdogs": [
+      "hotdogs"
+    ],
+    "Hotdogs/Pretzels": [
+      "hotdogs/pretzels"
+    ],
+    "Indian": [
+      "indian"
+    ],
+    "Indonesian": [
+      "indonesian"
+    ],
+    "Iranian": [
+      "iranian"
+    ],
+    "Irish": [
+      "irish"
+    ],
+    "Italian": [
+      "italian"
+    ],
+    "Japanese": [
+      "japanese"
+    ],
+    "Jewish/Kosher": [
+      "jewish/kosher"
+    ],
+    "Juice, Smoothies, Fruit Salads": [
+      "juice, smoothies, fruit salads"
+    ],
+    "Korean": [
+      "korean"
+    ],
+    "Latin American": [
+      "latin american"
+    ],
+    "Lebanese": [
+      "lebanese"
+    ],
+    "Mediterranean": [
+      "mediterranean"
+    ],
+    "Mexican": [
+      "mexican"
+    ],
+    "Middle Eastern": [
+      "middle eastern"
+    ],
+    "Moroccan": [
+      "moroccan"
+    ],
+    "New American": [
+      "new american"
+    ],
+    "New French": [
+      "new french"
+    ],
+    "Not Listed/Not Applicable": [
+      "not listed/not applicable"
+    ],
+    "Nuts/Confectionary": [
+      "nuts/confectionary"
+    ],
+    "Other": [
+      "other"
+    ],
+    "Pakistani": [
+      "pakistani"
+    ],
+    "Pancakes/Waffles": [
+      "pancakes/waffles"
+    ],
+    "Peruvian": [
+      "peruvian"
+    ],
+    "Pizza": [
+      "pizza"
+    ],
+    "Polish": [
+      "polish"
+    ],
+    "Polynesian": [
+      "polynesian"
+    ],
+    "Portuguese": [
+      "portuguese"
+    ],
+    "Russian": [
+      "russian"
+    ],
+    "Salads": [
+      "salads"
+    ],
+    "Sandwiches": [
+      "sandwiches"
+    ],
+    "Sandwiches/Salads/Mixed Buffet": [
+      "sandwiches/salads/mixed buffet"
+    ],
+    "Scandinavian": [
+      "scandinavian"
+    ],
+    "Seafood": [
+      "seafood"
+    ],
+    "Soul Food": [
+      "soul food"
+    ],
+    "Soups": [
+      "soups"
+    ],
+    "Soups/Salads/Sandwiches": [
+      "soups/salads/sandwiches"
+    ],
+    "Southeast Asian": [
+      "southeast asian"
+    ],
+    "Southwestern": [
+      "southwestern"
+    ],
+    "Spanish": [
+      "spanish"
+    ],
+    "Steakhouse": [
+      "steakhouse"
+    ],
+    "Tapas": [
+      "tapas"
+    ],
+    "Tex-Mex": [
+      "tex-mex"
+    ],
+    "Thai": [
+      "thai"
+    ],
+    "Turkish": [
+      "turkish"
+    ],
+    "Vegan": [
+      "vegan"
+    ],
+    "Vegetarian": [
+      "vegetarian"
+    ]
+  },
+  "boroughs": {
+    "Manhattan": [
+      "manhattan",
+      "midtown",
+      "downtown",
+      "uptown",
+      "harlem",
+      "soho",
+      "tribeca",
+      "chelsea",
+      "east village",
+      "west village"
+    ],
+    "Brooklyn": [
+      "brooklyn",
+      "williamsburg",
+      "bushwick",
+      "dumbo",
+      "park slope",
+      "bed-stuy"
+    ],
+    "Queens": [
+      "queens",
+      "flushing",
+      "astoria",
+      "jackson heights",
+      "long island city"
+    ],
+    "Bronx": [
+      "bronx",
+      "fordham"
+    ],
+    "Staten Island": [
+      "staten island"
+    ]
+  },
+  "priceLevels": [
+    "Expensive",
+    "Free",
+    "Inexpensive",
+    "Moderate",
+    "Very Expensive"
+  ],
+  "ratingRange": {
+    "_id": null,
+    "minRating": 1,
+    "maxRating": 5,
+    "avgRating": 4.25591967381778
+  },
+  "extractedAt": "2025-12-21T00:35:56.750Z",
+  "totalRestaurants": 26482
+}

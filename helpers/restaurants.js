@@ -1,4 +1,28 @@
 const { MongoClient, ObjectId } = require('mongodb');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const https = require('https');
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+const geminiClient = axios.create({
+  timeout: 30000,
+  httpsAgent: new https.Agent({ keepAlive: true }),
+});
+
+// Load restaurant metadata from JSON (with fallback)
+let CUISINE_TYPES = null;
+try {
+  const filtersPath = path.join(__dirname, '..', 'data', 'restaurant_filters.json');
+  if (fs.existsSync(filtersPath)) {
+    CUISINE_TYPES = JSON.parse(fs.readFileSync(filtersPath, 'utf8'));
+    console.log('✅ Loaded restaurant filters from restaurant_filters.json');
+  }
+} catch (err) {
+  console.warn('⚠️  Could not load restaurant_filters.json, using hardcoded filters:', err.message);
+}
+
 
 // Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -46,29 +70,13 @@ function isRestaurantQuery(query) {
   return restaurantKeywords.some(k => queryLower.includes(k));
 }
 
-// Extract restaurant search filters from query
+// Extract restaurant search filters from query (Heuristic Fallback)
 function extractRestaurantFilters(query) {
   const queryLower = query.toLowerCase();
   const filters = {};
 
-  const cuisines = {
-    italian: ['italian', 'pizza', 'pasta'],
-    chinese: ['chinese', 'dim sum', 'szechuan'],
-    japanese: ['japanese', 'sushi', 'ramen'],
-    mexican: ['mexican', 'tacos', 'burrito'],
-    indian: ['indian', 'curry', 'tandoori'],
-    thai: ['thai', 'pad thai'],
-    korean: ['korean', 'bbq', 'bibimbap'],
-    french: ['french', 'bistro'],
-    american: ['american', 'burger', 'steakhouse'],
-    seafood: ['seafood', 'fish', 'lobster'],
-    vegetarian: ['vegetarian', 'vegan', 'plant-based'],
-    mediterranean: ['mediterranean', 'greek', 'falafel'],
-    caribbean: ['caribbean', 'jamaican', 'jerk'],
-    'soul food': ['soul food', 'southern'],
-    deli: ['deli', 'sandwich', 'bagel'],
-    cafe: ['cafe', 'coffee', 'bakery']
-  };
+  // Use cuisines from JSON if available
+  const cuisines = CUISINE_TYPES?.cuisines || {};
 
   for (const [cuisine, keywords] of Object.entries(cuisines)) {
     if (keywords.some(k => queryLower.includes(k))) {
@@ -77,7 +85,8 @@ function extractRestaurantFilters(query) {
     }
   }
 
-  const boroughs = {
+  // Use boroughs from JSON if available, otherwise fallback to hardcoded
+  const boroughs = CUISINE_TYPES?.boroughs || {
     Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'harlem', 'soho', 'tribeca'],
     Brooklyn: ['brooklyn', 'williamsburg', 'bushwick', 'dumbo'],
     Queens: ['queens', 'flushing', 'astoria', 'jackson heights'],
@@ -92,11 +101,13 @@ function extractRestaurantFilters(query) {
     }
   }
 
-  // Price level detection
+  // Price level detection (Standard mapping)
   if (queryLower.includes('cheap') || queryLower.includes('budget') || queryLower.includes('affordable')) {
-    filters.priceLevel = { $lte: 2 };
+    filters.priceLevel = 'Inexpensive';
   } else if (queryLower.includes('expensive') || queryLower.includes('fancy') || queryLower.includes('upscale')) {
-    filters.priceLevel = { $gte: 3 };
+    filters.priceLevel = 'Expensive';
+  } else if (queryLower.includes('moderate') || queryLower.includes('reasonable')) {
+    filters.priceLevel = 'Moderate';
   }
 
   // Rating detection
@@ -107,6 +118,49 @@ function extractRestaurantFilters(query) {
   return filters;
 }
 
+// Extract restaurant filters using Gemini AI
+async function extractRestaurantFiltersWithGemini(query) {
+  if (!GEMINI_API_KEY) return extractRestaurantFilters(query);
+
+  const availableCuisines = Object.keys(CUISINE_TYPES?.cuisines || {}).slice(0, 100).join(', ');
+  const availableBoroughs = Object.keys(CUISINE_TYPES?.boroughs || {}).join(', ');
+  const availablePrices = (CUISINE_TYPES?.priceLevels || ['Inexpensive', 'Moderate', 'Expensive', 'Very Expensive']).join(', ');
+
+  const prompt = `Extract restaurant search filters from this query. 
+Query: "${query}"
+
+Guidelines:
+- cuisine: Choose the most relevant category from this list: [${availableCuisines}]. If none match, leave null.
+- borough: Choose from [${availableBoroughs}].
+- priceLevel: Choose from [${availablePrices}]. If they say "cheap", pick "Inexpensive". If "fancy", pick "Expensive".
+- minRating: A number (1-5) if they ask for "best", "top", "highly rated" (default to 4 if user asks for best).
+- searchTerm: Any specific name or food item mentioned that isn't a cuisine (e.g., "Lucali", "shrimp").
+
+Return ONLY a valid JSON object.`;
+
+  try {
+    const response = await geminiClient.post(
+      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+
+    let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (text.startsWith('```')) {
+      text = text.split('\n').slice(1).join('\n').replace(/```$/, '').trim();
+    }
+    const filters = JSON.parse(text);
+    console.log('🤖 Gemini extracted restaurant filters:', filters);
+    return filters;
+  } catch (err) {
+    console.error('Gemini restaurant filter extraction failed:', err.message);
+    return extractRestaurantFilters(query);
+  }
+}
+
 // Search restaurants using MongoDB
 async function searchRestaurants(query) {
   const collection = await connectToMongoDB();
@@ -114,7 +168,7 @@ async function searchRestaurants(query) {
     return { query, filters: {}, results: [], count: 0 };
   }
 
-  const filters = extractRestaurantFilters(query);
+  const filters = await extractRestaurantFiltersWithGemini(query);
   const mongoQuery = {};
 
   if (filters.cuisine) {
@@ -133,8 +187,16 @@ async function searchRestaurants(query) {
     mongoQuery.rating = { $gte: filters.minRating };
   }
 
-  // If no specific filters, do lightweight regex search based on remaining terms
-  if (!filters.cuisine && !filters.borough) {
+  if (filters.searchTerm) {
+    mongoQuery.$or = [
+      { Name: { $regex: filters.searchTerm, $options: 'i' } },
+      { cuisineDescription: { $regex: filters.searchTerm, $options: 'i' } },
+      { reviewSummary: { $regex: filters.searchTerm, $options: 'i' } }
+    ];
+  }
+
+  // If no specific filters and no search term, do lightweight regex search based on remaining terms
+  if (!filters.cuisine && !filters.borough && !filters.searchTerm) {
     const stop = new Set(['restaurant', 'restaurants', 'food', 'eat', 'good', 'best', 'where', 'to', 'the', 'a', 'in']);
     const searchTerms = query
       .toLowerCase()
@@ -154,95 +216,13 @@ async function searchRestaurants(query) {
     const results = await collection
       .find(mongoQuery)
       .sort({ rating: -1 })
-      .limit(100)
+      .limit(10) // Limit to 10 for Instagram
       .toArray();
 
     return { query, filters, results, count: results.length };
   } catch (err) {
     console.error('MongoDB restaurant search failed:', err.message);
     return { query, filters: {}, results: [], count: 0 };
-  }
-}
-
-// Get restaurant by ID
-async function getRestaurantById(id) {
-  const collection = await connectToMongoDB();
-  if (!collection) return null;
-
-  try {
-    return await collection.findOne({ _id: new ObjectId(id) });
-  } catch (err) {
-    console.error('Failed to get restaurant:', err.message);
-    return null;
-  }
-}
-
-// Get restaurants by cuisine type
-async function getRestaurantsByCuisine(cuisine, limit = 10) {
-  const collection = await connectToMongoDB();
-  if (!collection) return [];
-
-  try {
-    return await collection
-      .find({ cuisineDescription: { $regex: cuisine, $options: 'i' } })
-      .sort({ rating: -1 })
-      .limit(limit)
-      .toArray();
-  } catch (err) {
-    console.error('Failed to get restaurants by cuisine:', err.message);
-    return [];
-  }
-}
-
-// Get top-rated restaurants
-async function getTopRatedRestaurants(limit = 10, minRating = 4) {
-  const collection = await connectToMongoDB();
-  if (!collection) return [];
-
-  try {
-    return await collection
-      .find({ rating: { $gte: minRating } })
-      .sort({ rating: -1 })
-      .limit(limit)
-      .toArray();
-  } catch (err) {
-    console.error('Failed to get top-rated restaurants:', err.message);
-    return [];
-  }
-}
-
-// Get restaurants by borough
-async function getRestaurantsByBorough(borough, limit = 20) {
-  const collection = await connectToMongoDB();
-  if (!collection) return [];
-
-  try {
-    return await collection
-      .find({ fullAddress: { $regex: borough, $options: 'i' } })
-      .sort({ rating: -1 })
-      .limit(limit)
-      .toArray();
-  } catch (err) {
-    console.error('Failed to get restaurants by borough:', err.message);
-    return [];
-  }
-}
-
-// Get random restaurant suggestions
-async function getRandomRestaurants(limit = 5) {
-  const collection = await connectToMongoDB();
-  if (!collection) return [];
-
-  try {
-    return await collection
-      .aggregate([
-        { $match: { rating: { $gte: 3.5 } } },
-        { $sample: { size: limit } }
-      ])
-      .toArray();
-  } catch (err) {
-    console.error('Failed to get random restaurants:', err.message);
-    return [];
   }
 }
 
@@ -259,7 +239,11 @@ function formatRestaurantResults(searchResult) {
     response += `${i + 1}. ${r.Name || 'Unknown'}\n`;
     if (r.cuisineDescription) response += `   🍽️ ${r.cuisineDescription}\n`;
     if (r.rating) response += `   ⭐ ${r.rating}/5\n`;
-    if (r.priceLevel) response += `   💰 ${'$'.repeat(r.priceLevel)}\n`;
+    if (r.priceLevel) {
+      const priceMap = { 'Inexpensive': '$', 'Moderate': '$$', 'Expensive': '$$$', 'Very Expensive': '$$$$', 'Free': 'Free' };
+      const priceDisplay = typeof r.priceLevel === 'number' ? '$'.repeat(r.priceLevel) : (priceMap[r.priceLevel] || r.priceLevel);
+      response += `   💰 ${priceDisplay}\n`;
+    }
     if (r.fullAddress) response += `   📍 ${r.fullAddress}\n`;
     if (r.reviewSummary) {
       const summary = r.reviewSummary.length > 80 ? r.reviewSummary.substring(0, 80) + '...' : r.reviewSummary;
@@ -271,19 +255,6 @@ function formatRestaurantResults(searchResult) {
   return response.trim();
 }
 
-// Format single restaurant details
-function formatRestaurantDetails(restaurant) {
-  if (!restaurant) return "Restaurant not found.";
-
-  let response = `🍽️ ${restaurant.Name}\n\n`;
-  if (restaurant.cuisineDescription) response += `Cuisine: ${restaurant.cuisineDescription}\n`;
-  if (restaurant.rating) response += `Rating: ⭐ ${restaurant.rating}/5\n`;
-  if (restaurant.priceLevel) response += `Price: ${'$'.repeat(restaurant.priceLevel)}\n`;
-  if (restaurant.fullAddress) response += `Address: 📍 ${restaurant.fullAddress}\n`;
-  if (restaurant.reviewSummary) response += `\n💬 "${restaurant.reviewSummary}"`;
-
-  return response;
-}
 
 // Graceful shutdown handler
 process.on('SIGINT', async () => {
@@ -314,12 +285,6 @@ module.exports = {
   isRestaurantQuery,
   extractRestaurantFilters,
   searchRestaurants,
-  getRestaurantById,
-  getRestaurantsByCuisine,
-  getTopRatedRestaurants,
-  getRestaurantsByBorough,
-  getRandomRestaurants,
   formatRestaurantResults,
-  formatRestaurantDetails,
   closeMongoDBConnection
 };

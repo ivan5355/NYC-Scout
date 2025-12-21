@@ -27,7 +27,7 @@ const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.jso
    WEBHOOK DM ENTRYPOINT
 ===================== */
 async function handleDM(body) {
-  console.log('🚀 POST /instagram hit');
+  console.log(' POST /instagram hit');
 
   const entry = body?.entry?.[0];
   const messaging = entry?.messaging?.[0];
