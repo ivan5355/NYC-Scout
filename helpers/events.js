@@ -233,7 +233,7 @@ async function searchEventsWithGeminiWebSearch(query, filters) {
   try {
     console.log(`Starting Gemini Web Search for: "${query}"...`);
 
-    const prompt = `Find real-time NYC events matching this request: "${query}"
+    const prompt = `Find 5 real-time NYC events matching this request: "${query}"
 Context filters: ${JSON.stringify(filters)}
 Today's date is ${new Date().toISOString().split('T')[0]}.
 
