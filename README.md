@@ -90,7 +90,7 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
           │ • priceLevel     │  │ • borough        │   │
           │ • searchTerm     │  │ • searchTerm     │   │
           └────────┬─────────┘  └────────┬─────────┘   │
-                   ↓                      ↓             │
+                   ↓                      ↓            │
           ┌──────────────────┐  ┌──────────────────┐   │
           │ Apply Filters to │  │ Apply Filters to │   │
           │ MongoDB Query    │  │ NYC APIs Data    │   │
@@ -100,15 +100,15 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
                    ↓                      ↓        restaurants..."
                If no results          If no results     ↓
                    ↓                      ↓         Response
-          ┌──────────────────┐  ┌──────────────────┐   │
-          │ Gemini Web Search│  │ Gemini Web Search│   │
-          │ (with filters)   │  │ (with filters)   │   │
-          └────────┬─────────┘  └────────┬─────────┘   │
+          ┌──────────────────┐  ┌──────────────────┐    │
+          │ Gemini Web Search│  │ Gemini Web Search│    │
+          │                  │  │                  │    │
+          └────────┬─────────┘  └────────┬─────────┘    │
                    ↓                      ↓             │
                    └──────────────────────┴─────────────┘
                                   ↓
                      Instagram DM Response
-```
+```   
 
 ## Data Sources
 
