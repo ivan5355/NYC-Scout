@@ -233,9 +233,11 @@ async function searchEventsWithGeminiWebSearch(query, filters) {
   try {
     console.log(`Starting Gemini Web Search for: "${query}"...`);
 
-    const prompt = `Find 5 real-time NYC events matching this request: "${query}"
+    const prompt = `Find 5 UPCOMING real-time NYC events matching this request: "${query}"
 Context filters: ${JSON.stringify(filters)}
 Today's date is ${new Date().toISOString().split('T')[0]}.
+
+CRITICAL: Only include events occurring ON or AFTER today's date. Ignore any events that have already passed.
 
 Use your Google Search tool to find actual events. Provide a list with:
 - Event Name
@@ -244,7 +246,7 @@ Use your Google Search tool to find actual events. Provide a list with:
 
 Format it for an Instagram DM. Start directly with the results. 
 DO NOT include introductory phrases like "I have searched" or "Here are some events".
-If none are found, state that clearly without a preamble.`;
+If no upcoming events are found, state that clearly without a preamble.`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
