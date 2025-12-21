@@ -80,7 +80,7 @@ The application aggregates real-time data from official NYC agencies:
 - **NYC Permitted Events**: Live data on parades, street fairs, block parties, and film shoots.
   - Source: [NYC Open Data - NYC Permitted Event Listings](https://data.cityofnewyork.us/City-Government/NYC-Permitted-Event-Listings/tvpp-9vvx)
 - **NYC Parks Events**: Live feed of activities including concerts, tours, kids programs, and fitness classes in NYC parks.
-  - Source: [NYC Parks - Events RSS Feed](https://www.nycgovparks.org/events/rss)
+  - Source: [NYC Parks - Events RSS Feed](https://catalog.data.gov/dataset/nyc-parks-public-events-upcoming-14-days/resource/0ef56b88-24ce-46b9-b45b-7af20021c0ed)
 - **NYC Restaurants**: Snapshot of NYC restaurants with cuisine types, boroughs, and health-related metadata.
   - Source: [NYC DOHMH Restaurant Inspections](https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j) (Managed via MongoDB)
 
