@@ -271,8 +271,8 @@ async function extractFiltersWithGemini(query) {
 
   console.log('🤖 Executing extractFiltersWithGemini...');
 
-  let categories = ['concert', 'festival', 'sports', 'parade', 'fair', 'movie', 'art', 'fitness', 'kids', 'theater', 'nature', 'volunteer'];
-  let boroughs = ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island'];
+  let categories = [];
+  let boroughs = [];
 
   try {
     const filtersPath = path.join(__dirname, '../data/event_filters.json');
@@ -356,13 +356,20 @@ function formatEventResults(searchResult) {
     return "I couldn't find any events matching your search. Try a different date, category, or borough!";
   }
 
-  const events = searchResult.results.slice(0, 5);
+  const events = searchResult.results.slice(0, 4);
   let response = `Found ${searchResult.count} event${searchResult.count > 1 ? 's' : ''}! Here are the top results:\n\n`;
 
   events.forEach((e, i) => {
-    response += `${i + 1}. ${e.event_name || 'Unnamed Event'}\n`;
+    const name = e.event_name?.length > 70 ? e.event_name.substring(0, 67) + '...' : (e.event_name || 'Unnamed Event');
+    response += `${i + 1}. ${name}\n`;
+
     if (e.start_date_time) response += `   📅 ${e.start_date_time.split('T')[0]}\n`;
-    if (e.event_location) response += `   📍 ${e.event_location}\n`;
+
+    if (e.event_location) {
+      const loc = e.event_location.length > 70 ? e.event_location.substring(0, 67) + '...' : e.event_location;
+      response += `   📍 ${loc}\n`;
+    }
+
     if (e.event_borough) response += `   🏙️ ${e.event_borough}\n`;
   });
 
@@ -376,10 +383,13 @@ async function sendInstagramMessage(recipientId, text) {
     return;
   }
 
+  // Instagram has a 1000-character limit for text messages
+  const safeText = text.length > 1000 ? text.substring(0, 997) + '...' : text;
+
   try {
     await graphClient.post(
       'https://graph.facebook.com/v18.0/me/messages',
-      { recipient: { id: recipientId }, message: { text } },
+      { recipient: { id: recipientId }, message: { text: safeText } },
       { params: { access_token: PAGE_ACCESS_TOKEN } }
     );
     console.log(`Reply sent to ${recipientId}`);

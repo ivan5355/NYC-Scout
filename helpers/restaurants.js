@@ -240,21 +240,29 @@ function formatRestaurantResults(searchResult) {
     return "I couldn't find any restaurants matching your search. Try a different cuisine or location!";
   }
 
-  const restaurants = searchResult.results.slice(0, 5);
+  const restaurants = searchResult.results.slice(0, 3);
   let response = `Found ${searchResult.count} restaurant${searchResult.count > 1 ? 's' : ''}! Here are some top picks:\n\n`;
 
   restaurants.forEach((r, i) => {
-    response += `${i + 1}. ${r.Name || 'Unknown'}\n`;
+    const name = r.Name?.length > 50 ? r.Name.substring(0, 47) + '...' : (r.Name || 'Unknown');
+    response += `${i + 1}. ${name}\n`;
+
     if (r.cuisineDescription) response += `   🍽️ ${r.cuisineDescription}\n`;
     if (r.rating) response += `   ⭐ ${r.rating}/5\n`;
+
     if (r.priceLevel) {
       const priceMap = { 'Inexpensive': '$', 'Moderate': '$$', 'Expensive': '$$$', 'Very Expensive': '$$$$', 'Free': 'Free' };
       const priceDisplay = typeof r.priceLevel === 'number' ? '$'.repeat(r.priceLevel) : (priceMap[r.priceLevel] || r.priceLevel);
       response += `   💰 ${priceDisplay}\n`;
     }
-    if (r.fullAddress) response += `   📍 ${r.fullAddress}\n`;
+
+    if (r.fullAddress) {
+      const addr = r.fullAddress.length > 60 ? r.fullAddress.substring(0, 57) + '...' : r.fullAddress;
+      response += `   📍 ${addr}\n`;
+    }
+
     if (r.reviewSummary) {
-      const summary = r.reviewSummary.length > 80 ? r.reviewSummary.substring(0, 80) + '...' : r.reviewSummary;
+      const summary = r.reviewSummary.length > 80 ? r.reviewSummary.substring(0, 77) + '...' : r.reviewSummary;
       response += `   💬 "${summary}"\n`;
     }
     response += '\n';
