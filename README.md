@@ -76,27 +76,22 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restauran
 ## File Structure
 
 - **`api/api.js`** - Express routes and webhook handlers
-- **`helpers/events.js`** - Event fetching, filtering, and AI functions
-- **`helpers/restaurants.js`** - MongoDB-backed restaurant search and formatting
-- **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` (dynamic filter snapshots)
-- **`scripts/`** - Data extraction scripts for populating filters
+- **`helpers/query_router.js`** - AI-powered intent classifier (RESTAURANT vs EVENT vs GENERAL)
+- **`helpers/events.js`** - Event fetching, filtering, and AI search extraction
+- **`helpers/restaurants.js`** - MongoDB-backed restaurant search and AI extraction
+- **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` (dynamic caches)
+- **`scripts/`** - Data extraction scripts for populating/refreshing filters
 
 ## Flow
 
-1. **User sends DM** to your Instagram account
-2. **Facebook webhook** delivers the message to `POST /instagram`
-3. **Query detection** checks if the message is about restaurants or NYC events
-4. **If restaurant query:**
-   - Uses Gemini AI to extract `cuisine`, `borough`, `priceLevel`, and `searchTerm`
-   - Searches MongoDB (`MONGODB_URI`) using these dynamic filters
-   - Formats and returns the top matches
-5. **If event query:**
-   - Fetches live data from NYC Open Data API + NYC Parks API
-   - Uses Gemini AI to parse natural language into `category`, `borough`, and `searchTerm`
-   - Filters events based on dynamic category lists and returns top 5 matches
-6. **If general message:**
-   - Sends to Gemini for a conversational response
-7. **Response sent** back to user via Instagram DM
+1. **User sends DM** to your Instagram account.
+2. **Facebook webhook** delivers the message to your server.
+3. **Intent Classification**: The query is sent to **Gemini AI** (`query_router.js`) to determine if the user is looking for a restaurant, an event, or just chatting.
+4. **Entity Extraction & Search**:
+   - **If RESTAURANT**: Gemini extracts `cuisine`, `borough`, and `priceLevel`, then searches the MongoDB database.
+   - **If EVENT**: Gemini extracts `category`, `date`, and `searchTerm`, then fetches live data from NYC Open Data and NYC Parks.
+   - **If GENERAL**: Gemini provides a conversational response directly.
+5. **Response sent** back to the user via Instagram DM.
 
 ## Filtering System
 

@@ -4,10 +4,10 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  isRestaurantQuery,
   searchRestaurants,
   formatRestaurantResults,
 } = require('./restaurants');
+const { classifyQuery } = require('./query_router');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
@@ -53,11 +53,11 @@ async function handleDM(body) {
 async function processDM(senderId, messageText) {
   console.log(`Incoming DM from ${senderId}: ${messageText}`);
 
-  const lowerMsg = messageText.toLowerCase();
   let reply = null;
+  const category = await classifyQuery(messageText);
 
   // 1) Restaurants
-  if (isRestaurantQuery(messageText)) {
+  if (category === 'RESTAURANT') {
     try {
       console.log('Processing as restaurant query...');
       const searchResult = await searchRestaurants(messageText);
@@ -71,18 +71,8 @@ async function processDM(senderId, messageText) {
     return;
   }
 
-  // 2) Events (keyword heuristic)
-  const eventKeywords = [
-    'event', 'concert', 'festival', 'parade', 'fair', 'show', 'happening',
-    "what's on", 'things to do'
-  ];
-  const boroughKeywords = ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten'];
-
-  const isEventQuery =
-    eventKeywords.some(k => lowerMsg.includes(k)) ||
-    boroughKeywords.some(b => lowerMsg.includes(b));
-
-  if (isEventQuery) {
+  // 2) Events
+  if (category === 'EVENT') {
     try {
       console.log('Processing as event query...');
       const searchResult = await searchEvents(messageText);
@@ -96,7 +86,7 @@ async function processDM(senderId, messageText) {
     return;
   }
 
-  // 3) General Gemini
+  // 3) General Gemini (category === 'GENERAL')
   try {
     console.log('Calling Gemini for general response...');
     reply = await getGeminiResponse(messageText);
