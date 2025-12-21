@@ -1,0 +1,106 @@
+const { classifyQuery } = require('./query_router');
+const { searchRestaurants, formatRestaurantResults } = require('./restaurants');
+const { searchEvents, formatEventResults, getGeminiResponse } = require('./events');
+const axios = require('axios');
+const https = require('https');
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+
+const geminiClient = axios.create({
+    timeout: 30000,
+    httpsAgent: new https.Agent({ keepAlive: true }),
+});
+
+const graphClient = axios.create({
+    timeout: 15000,
+    httpsAgent: new https.Agent({ keepAlive: true }),
+});
+
+/* =====================
+   DM PROCESSING
+===================== */
+async function processDM(senderId, messageText) {
+    console.log(`Incoming DM from ${senderId}: ${messageText}`);
+
+    let reply = null;
+    const category = await classifyQuery(messageText);
+
+    // 1) Restaurants
+    if (category === 'RESTAURANT') {
+        try {
+            console.log('Processing as restaurant query...');
+            const searchResult = await searchRestaurants(messageText);
+            reply = formatRestaurantResults(searchResult);
+        } catch (err) {
+            console.error('Restaurant search failed:', err.message);
+            reply = await safeGeminiFallback(messageText);
+        }
+
+        await sendInstagramMessage(senderId, reply);
+        return;
+    }
+
+    // 2) Events
+    if (category === 'EVENT') {
+        try {
+            console.log('Processing as event query...');
+            const searchResult = await searchEvents(messageText);
+            reply = formatEventResults(searchResult);
+        } catch (err) {
+            console.error('Event search failed:', err.message);
+            reply = await safeGeminiFallback(messageText);
+        }
+
+        await sendInstagramMessage(senderId, reply);
+        return;
+    }
+
+    // 3) General Gemini (category === 'GENERAL')
+    try {
+        console.log('Calling Gemini for general response...');
+        reply = await getGeminiResponse(messageText);
+    } catch (err) {
+        console.error('Gemini failed, using fallback');
+        reply = "Thanks for your message! We'll get back to you shortly.";
+    }
+
+    await sendInstagramMessage(senderId, reply);
+}
+
+async function safeGeminiFallback(messageText) {
+    try {
+        return await getGeminiResponse(messageText);
+    } catch {
+        return "Sorry — something went wrong. Try again!";
+    }
+}
+
+/* =====================
+   INSTAGRAM MESSAGING
+===================== */
+async function sendInstagramMessage(recipientId, text) {
+    if (!PAGE_ACCESS_TOKEN) {
+        console.error('PAGE_ACCESS_TOKEN missing');
+        return;
+    }
+
+    // Instagram has a 1000-character limit for text messages
+    const safeText = text.length > 1000 ? text.substring(0, 997) + '...' : text;
+
+    try {
+        await graphClient.post(
+            'https://graph.facebook.com/v18.0/me/messages',
+            { recipient: { id: recipientId }, message: { text: safeText } },
+            { params: { access_token: PAGE_ACCESS_TOKEN } }
+        );
+        console.log(`✅ Reply sent to ${recipientId}`);
+    } catch (err) {
+        console.error('❌ Send failed:', err.response?.data || err.message);
+    }
+}
+
+module.exports = {
+    processDM,
+    sendInstagramMessage,
+};
