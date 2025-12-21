@@ -168,13 +168,13 @@ Return ONLY a valid JSON object.`;
 }
 
 // Search restaurants using MongoDB
-async function searchRestaurants(query) {
+async function searchRestaurants(query, preExtractedFilters = null) {
   const collection = await connectToMongoDB();
   if (!collection) {
     return { query, filters: {}, results: [], count: 0 };
   }
 
-  const filters = await extractRestaurantFiltersWithGemini(query);
+  const filters = preExtractedFilters || await extractRestaurantFiltersWithGemini(query);
   console.log('🛠️ Applying filters to MongoDB query:', JSON.stringify(filters, null, 2));
   const mongoQuery = {};
 
@@ -292,7 +292,9 @@ async function closeMongoDBConnection() {
 module.exports = {
   isRestaurantQuery,
   extractRestaurantFilters,
+  extractRestaurantFiltersWithGemini,
   searchRestaurants,
   formatRestaurantResults,
-  closeMongoDBConnection
+  closeMongoDBConnection,
+  getRestaurantMetadata: () => CUISINE_TYPES
 };

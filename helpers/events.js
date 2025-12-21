@@ -232,36 +232,26 @@ function applyFilters(events, filters) {
     });
   }
 
-  if (filters.category) {
-    const categoryKeywords = {
-      concert: ['concert', 'music', 'performance', 'live'],
-      festival: ['festival', 'fest', 'celebration'],
-      sports: ['sports', 'athletic', 'race', 'marathon', 'run', 'sport'],
-      parade: ['parade', 'march', 'procession'],
-      fair: ['fair', 'street fair', 'block party', 'market'],
-      movie: ['movie', 'film', 'screening', 'cinema'],
-      art: ['art', 'exhibition', 'gallery', 'museum', 'arts'],
-      fitness: ['fitness', 'yoga', 'workout', 'exercise', 'health'],
-      kids: ['kids', 'children', 'family', 'youth'],
-      theater: ['theater', 'theatre', 'play', 'broadway', 'drama'],
-      nature: ['nature', 'birding', 'wildlife', 'garden', 'stewardship', 'outdoor'],
-      volunteer: ['volunteer', 'cleanup', "it's my park", 'stewardship']
-    };
-
-    // If the category is from our dynamic list (Gemini-assigned), search for it directly.
-    // Otherwise, use the keyword mapping.
-    const keywords = categoryKeywords[filters.category] || [filters.category];
+  if (filters.category || filters.searchTerm) {
+    const cat = (filters.category || '').toLowerCase();
+    const term = (filters.searchTerm || '').toLowerCase();
 
     results = results.filter(event => {
       const eventType = (event.event_type || '').toLowerCase();
       const eventName = (event.event_name || '').toLowerCase();
       const eventLocation = (event.event_location || '').toLowerCase();
 
-      return keywords.some(k =>
-        eventType.includes(k.toLowerCase()) ||
-        eventName.includes(k.toLowerCase()) ||
-        eventLocation.includes(k.toLowerCase())
+      // Match the specific category (from the official list)
+      const matchCategory = cat && eventType.includes(cat);
+
+      // Match the user's raw search term across name, type, and location
+      const matchSearchToken = term && (
+        eventType.includes(term) ||
+        eventName.includes(term) ||
+        eventLocation.includes(term)
       );
+
+      return matchCategory || matchSearchToken;
     });
   }
 
@@ -306,6 +296,7 @@ Return a JSON object with these fields (only include fields that are mentioned):
 - date: object with "type" (specific/range/month) and relevant date fields
 - category: pick the best fit from [${categories.join(', ')}]
 - borough: one of [${boroughs.join(', ')}]
+- searchTerm: any specific keyword the user mentioned (e.g. "concert", "music", "yoga", "art")
 Only return valid JSON, no explanation.`;
 
   try {

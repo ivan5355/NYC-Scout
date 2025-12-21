@@ -76,8 +76,10 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restauran
 ## File Structure
 
 - **`api/api.js`** - Express routes and webhook handlers
-- **`api/helpers.js`** - Event fetching, filtering, and AI functions
-- **`api/restaurantHelpers.js`** - MongoDB-backed restaurant search and formatting
+- **`helpers/events.js`** - Event fetching, filtering, and AI functions
+- **`helpers/restaurants.js`** - MongoDB-backed restaurant search and formatting
+- **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` (dynamic filter snapshots)
+- **`scripts/`** - Data extraction scripts for populating filters
 
 ## Flow
 
@@ -85,59 +87,38 @@ Instagram DM → Facebook Webhook → Vercel (api.js) → helpers.js / restauran
 2. **Facebook webhook** delivers the message to `POST /instagram`
 3. **Query detection** checks if the message is about restaurants or NYC events
 4. **If restaurant query:**
-   - Uses MongoDB (`MONGODB_URI`) to search the `nyc-events.restaurants` collection
+   - Uses Gemini AI to extract `cuisine`, `borough`, `priceLevel`, and `searchTerm`
+   - Searches MongoDB (`MONGODB_URI`) using these dynamic filters
    - Formats and returns the top matches
 5. **If event query:**
    - Fetches live data from NYC Open Data API + NYC Parks API
-   - Uses Gemini AI to parse natural language into filters (date, category, borough)
-   - Filters events and returns top 5 matches
+   - Uses Gemini AI to parse natural language into `category`, `borough`, and `searchTerm`
+   - Filters events based on dynamic category lists and returns top 5 matches
 6. **If general message:**
    - Sends to Gemini for a conversational response
 7. **Response sent** back to user via Instagram DM
 
-## Data Sources
-
-| Source | API | Events |
-|--------|-----|--------|
-| NYC Permitted Events | `data.cityofnewyork.us/resource/tvpp-9vvx.json` | Parades, street fairs, film shoots |
-| NYC Parks | `nycgovparks.org/xml/events_300_rss.json` | Park concerts, fitness classes, kids activities |
-
 ## Filtering System
 
+The application uses a **Dynamic Filtering System**. Instead of hardcoding categories, it extracts valid values directly from the sources and uses Gemini to map user queries to them.
+
+### Extraction Scripts
+Before running the app (or to update filters), run these scripts:
+- `node scripts/extract_restaurant_filters.js`: Scans restaurant data to find all cuisines and boroughs.
+- `node scripts/extract_event_filters.js`: Scans NYC Open Data to find active event categories and boroughs.
+
 ### Restaurant Search Filters
-
-The application supports several types of filters for restaurant searches:
-
-1. **Cuisine Filtering**
-   - Searches the `cuisineDescription` field using case-insensitive regex
-   - Example: "Find Italian restaurants" → `{ cuisineDescription: /italian/i }`
-
-2. **Location/Borough Filtering**
-   - Searches the `fullAddress` field for borough names
-   - Supports all NYC boroughs (Manhattan, Brooklyn, Queens, Bronx, Staten Island)
-   - Example: "Pizza in Brooklyn" → `{ fullAddress: /brooklyn/i }`
-
-3. **Price Level Filtering**
-   - Filters by `priceLevel` field (1-4, where 1 is most affordable)
-   - Example: "Cheap restaurants" → `{ priceLevel: { $lte: 2 } }`
-
-4. **Rating Filtering**
-   - Filters by `rating` field (1-5 scale)
-   - Example: "Best Italian food" → `{ rating: { $gte: 4 } }`
-
-5. **Text Search**
-   - When no specific filters are detected, searches across:
-     - Restaurant name (`Name` field)
-     - Cuisine description (`cuisineDescription` field)
-   - Uses logical OR to match any search terms
+Supported fields extracted by Gemini:
+- **Cuisine**: Matches the user's intent to one of 100+ detected cuisines.
+- **Borough**: Validates against the 5 NYC boroughs.
+- **Price Level**: Maps "cheap", "fancy", etc., to "Inexpensive", "Expensive", etc.
+- **Search Term**: Captures specific names (e.g., "Lucali") or food items.
 
 ### Event Search Filters
-
-For NYC events, the system supports:
-- **Date filtering**: "events this weekend", "shows in December"
-- **Location filtering**: "events in Manhattan", "Brooklyn concerts"
-- **Category filtering**: "music events", "food festivals"
-- **Free events**: "free things to do"
+Supported fields extracted by Gemini:
+- **Date**: Handles specific dates, ranges, or months.
+- **Category**: Maps query to real NYC event types (e.g., "Concerts", "Street Event").
+- **Search Term**: Captures keywords for fuzzy matching across name and location.
 
 ### Example Queries
 
