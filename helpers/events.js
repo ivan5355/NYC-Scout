@@ -26,87 +26,6 @@ const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9v
 const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json';
 
 /* =====================
-   WEBHOOK DM ENTRYPOINT
-===================== */
-async function handleDM(body) {
-  console.log(' POST /instagram hit');
-
-  const entry = body?.entry?.[0];
-  const messaging = entry?.messaging?.[0];
-
-  if (!messaging || messaging.message?.is_echo) {
-    console.log('No message or echo, skipping');
-    return;
-  }
-
-  const senderId = messaging.sender?.id;
-  const text = messaging.message?.text;
-
-  if (!senderId || !text) return;
-
-  await processDM(senderId, text);
-}
-
-/* =====================
-   DM PROCESSING
-===================== */
-async function processDM(senderId, messageText) {
-  console.log(`Incoming DM from ${senderId}: ${messageText}`);
-
-  let reply = null;
-  const category = await classifyQuery(messageText);
-
-  // 1) Restaurants
-  if (category === 'RESTAURANT') {
-    try {
-      console.log('Processing as restaurant query...');
-      const searchResult = await searchRestaurants(messageText);
-      reply = formatRestaurantResults(searchResult);
-    } catch (err) {
-      console.error('Restaurant search failed:', err.message);
-      reply = await safeGeminiFallback(messageText);
-    }
-
-    await sendInstagramMessage(senderId, reply);
-    return;
-  }
-
-  // 2) Events
-  if (category === 'EVENT') {
-    try {
-      console.log('Processing as event query...');
-      const searchResult = await searchEvents(messageText);
-      reply = formatEventResults(searchResult);
-    } catch (err) {
-      console.error('Event search failed:', err.message);
-      reply = await safeGeminiFallback(messageText);
-    }
-
-    await sendInstagramMessage(senderId, reply);
-    return;
-  }
-
-  // 3) General Gemini (category === 'GENERAL')
-  try {
-    console.log('Calling Gemini for general response...');
-    reply = await getGeminiResponse(messageText);
-  } catch (err) {
-    console.error('Gemini failed, using fallback');
-    reply = "Thanks for your message! We'll get back to you shortly.";
-  }
-
-  await sendInstagramMessage(senderId, reply);
-}
-
-async function safeGeminiFallback(messageText) {
-  try {
-    return await getGeminiResponse(messageText);
-  } catch {
-    return "Sorry — something went wrong. Try again!";
-  }
-}
-
-/* =====================
    EVENT HELPERS
 ===================== */
 
@@ -307,7 +226,7 @@ Only return valid JSON, no explanation.`;
   }
 }
 
-// Generate conversational responses
+// Generate conversational responses with web search grounding
 async function getGeminiResponse(userMessage) {
   if (!GEMINI_API_KEY) return 'Thanks for reaching out!';
 
@@ -315,8 +234,11 @@ async function getGeminiResponse(userMessage) {
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
       {
-        contents: [{ parts: [{ text: `You are a helpful NYC assistant on Instagram. Keep replies short (1-2 sentences max).\nUser: ${userMessage}` }] }],
-        generationConfig: { maxOutputTokens: 100, temperature: 0.7 }
+        contents: [{
+          parts: [{ text: `You are a helpful NYC assistant on Instagram. Help the user with their request: "${userMessage}". Use Google Search if you need current info (weather, news, etc). Keep replies concise (1-3 sentences max).` }]
+        }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 200, temperature: 0.7 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
@@ -325,6 +247,44 @@ async function getGeminiResponse(userMessage) {
   } catch (err) {
     console.error('Gemini error:', err.message);
     throw err;
+  }
+}
+
+/**
+ * Uses Gemini's Web Search (Google Search grounding) to find events.
+ * @param {string} query The original user query
+ * @param {object} filters The filters extracted from the query
+ * @returns {Promise<string|null>} A conversational response or null
+ */
+async function searchEventsWithGeminiWebSearch(query, filters) {
+  if (!GEMINI_API_KEY) return null;
+
+  try {
+    let searchContext = `User query: "${query}"\n`;
+    if (filters.borough) searchContext += `Borough: ${filters.borough}\n`;
+    if (filters.category) searchContext += `Category: ${filters.category}\n`;
+    if (filters.date) searchContext += `Date criteria: ${JSON.stringify(filters.date)}\n`;
+    if (filters.searchTerm) searchContext += `Search term: ${filters.searchTerm}\n`;
+
+    const prompt = `Find current or upcoming events in NYC based on the following criteria:\n\n${searchContext}\n` +
+      `Use Google Search to provide real-time information. ` +
+      `If you find specific events, list 1-3 of them with dates and locations. ` +
+      `Keep the response short, friendly, and conversational for an Instagram DM.`;
+
+    const response = await geminiClient.post(
+      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 500, temperature: 0.1 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+
+    return response.data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch (err) {
+    console.error('Gemini web search failed:', err.response?.data || err.message);
+    return null;
   }
 }
 
@@ -337,13 +297,28 @@ async function searchEvents(query) {
 
   const results = applyFilters(events, filters);
   console.log(`✅ Event search complete. Found ${results.length} events matching query.`);
+
+  // FALLBACK: If no results found in local APIs, use Gemini Web Search
+  if (results.length === 0 && GEMINI_API_KEY) {
+    console.log('🔍 No local events found. Falling back to Gemini Web Search...');
+    const webSearchResults = await searchEventsWithGeminiWebSearch(query, filters);
+    if (webSearchResults) {
+      return { query, filters, results: [], count: 0, webSearchResponse: webSearchResults };
+    }
+  }
+
   return { query, filters, results, count: results.length };
 }
 
 // Format event results for Instagram
 function formatEventResults(searchResult) {
+  // If we have a web search fallback result, return it directly
+  if (searchResult.webSearchResponse) {
+    return searchResult.webSearchResponse;
+  }
+
   if (searchResult.count === 0) {
-    return "I couldn't find any events matching your search. Try a different date, category, or borough!";
+    return "I couldn't find any events matching your search in our local records. Try a different date, category, or borough!";
   }
 
   const events = searchResult.results.slice(0, 4);
@@ -366,34 +341,11 @@ function formatEventResults(searchResult) {
   return response;
 }
 
-// Send Instagram message
-async function sendInstagramMessage(recipientId, text) {
-  if (!PAGE_ACCESS_TOKEN) {
-    console.error('PAGE_ACCESS_TOKEN missing');
-    return;
-  }
-
-  // Instagram has a 1000-character limit for text messages
-  const safeText = text.length > 1000 ? text.substring(0, 997) + '...' : text;
-
-  try {
-    await graphClient.post(
-      'https://graph.facebook.com/v18.0/me/messages',
-      { recipient: { id: recipientId }, message: { text: safeText } },
-      { params: { access_token: PAGE_ACCESS_TOKEN } }
-    );
-    console.log(`Reply sent to ${recipientId}`);
-  } catch (err) {
-    console.error('Send failed:', err.response?.data || err.message);
-  }
-}
 
 module.exports = {
-  // webhook
-  handleDM,
-
   // events API
   fetchAllEvents,
   searchEvents,
   formatEventResults,
+  getGeminiResponse,
 };

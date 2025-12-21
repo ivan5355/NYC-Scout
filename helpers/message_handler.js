@@ -18,6 +18,25 @@ const graphClient = axios.create({
 });
 
 /* =====================
+   WEBHOOK DM ENTRYPOINT
+===================== */
+async function handleDM(body) {
+    const entry = body?.entry?.[0];
+    const messaging = entry?.messaging?.[0];
+
+    if (!messaging || messaging.message?.is_echo) {
+        return;
+    }
+
+    const senderId = messaging.sender?.id;
+    const text = messaging.message?.text;
+
+    if (!senderId || !text) return;
+
+    await processDM(senderId, text);
+}
+
+/* =====================
    DM PROCESSING
 ===================== */
 async function processDM(senderId, messageText) {
@@ -101,6 +120,7 @@ async function sendInstagramMessage(recipientId, text) {
 }
 
 module.exports = {
+    handleDM,
     processDM,
     sendInstagramMessage,
 };
