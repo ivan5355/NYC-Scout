@@ -72,6 +72,7 @@ function isRestaurantQuery(query) {
 
 // Extract restaurant search filters from query (Heuristic Fallback)
 function extractRestaurantFilters(query) {
+  console.log('🔍 Executing extractRestaurantFilters (Heuristic fallback)...');
   const queryLower = query.toLowerCase();
   const filters = {};
 
@@ -120,7 +121,12 @@ function extractRestaurantFilters(query) {
 
 // Extract restaurant filters using Gemini AI
 async function extractRestaurantFiltersWithGemini(query) {
-  if (!GEMINI_API_KEY) return extractRestaurantFilters(query);
+  if (!GEMINI_API_KEY) {
+    console.log('⚠️ GEMINI_API_KEY missing, falling back to heuristic extraction.');
+    return extractRestaurantFilters(query);
+  }
+
+  console.log('🤖 Executing extractRestaurantFiltersWithGemini...');
 
   const availableCuisines = Object.keys(CUISINE_TYPES?.cuisines || {}).slice(0, 100).join(', ');
   const availableBoroughs = Object.keys(CUISINE_TYPES?.boroughs || {}).join(', ');
@@ -169,6 +175,7 @@ async function searchRestaurants(query) {
   }
 
   const filters = await extractRestaurantFiltersWithGemini(query);
+  console.log('🛠️ Applying filters to MongoDB query:', JSON.stringify(filters, null, 2));
   const mongoQuery = {};
 
   if (filters.cuisine) {
@@ -219,6 +226,7 @@ async function searchRestaurants(query) {
       .limit(10) // Limit to 10 for Instagram
       .toArray();
 
+    console.log(`✅ Search complete. Found ${results.length} restaurants matching query.`);
     return { query, filters, results, count: results.length };
   } catch (err) {
     console.error('MongoDB restaurant search failed:', err.message);
@@ -274,9 +282,9 @@ async function closeMongoDBConnection() {
       await mongoClient.close();
       mongoClient = null;
       restaurantsCollection = null;
-      console.log('✅ MongoDB connection closed');
+      console.log(' MongoDB connection closed');
     } catch (err) {
-      console.error('❌ Error closing MongoDB connection:', err.message);
+      console.error(' Error closing MongoDB connection:', err.message);
     }
   }
 }

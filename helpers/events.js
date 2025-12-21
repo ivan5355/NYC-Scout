@@ -210,6 +210,7 @@ async function fetchAllEvents() {
 
 // Extract filters from natural language queries
 function extractFiltersFromQuery(query) {
+  console.log('🔍 Executing extractFiltersFromQuery (Heuristic fallback)...');
   const queryLower = query.toLowerCase();
   const filters = {};
   const today = new Date();
@@ -290,6 +291,7 @@ function extractFiltersFromQuery(query) {
 
 // Apply filters to event list
 function applyFilters(events, filters) {
+  console.log('🛠️ Applying filters to event list:', JSON.stringify(filters, null, 2));
   let results = [...events];
 
   if (filters.date) {
@@ -339,7 +341,12 @@ function applyFilters(events, filters) {
 
 // Use Gemini AI to parse complex queries
 async function extractFiltersWithGemini(query) {
-  if (!GEMINI_API_KEY) return extractFiltersFromQuery(query);
+  if (!GEMINI_API_KEY) {
+    console.log('⚠️ GEMINI_API_KEY missing, falling back to heuristic extraction.');
+    return extractFiltersFromQuery(query);
+  }
+
+  console.log('🤖 Executing extractFiltersWithGemini...');
 
   const today = new Date().toISOString().split('T')[0];
   const prompt = `Extract event search filters from this query. Today's date is ${today}.
@@ -397,6 +404,7 @@ async function searchEvents(query) {
   ]);
 
   const results = applyFilters(events, filters);
+  console.log(`✅ Event search complete. Found ${results.length} events matching query.`);
   return { query, filters, results, count: results.length };
 }
 
