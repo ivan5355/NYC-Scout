@@ -25,7 +25,7 @@ Return ONLY one word: RESTAURANT, EVENT, or OTHER. No explanation.`;
 
     try {
         const response = await geminiClient.post(
-            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
             {
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { maxOutputTokens: 10, temperature: 0.1 }
