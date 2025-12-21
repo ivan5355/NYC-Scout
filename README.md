@@ -98,16 +98,17 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
                    ↓                      ↓             ↓
                Results?              Results?     "I only help with
                    ↓                      ↓        restaurants..."
-               If no results          If no results     ↓
-                   ↓                      ↓         Response
-          ┌──────────────────┐  ┌──────────────────┐    │
-          │ Gemini Web Search│  │ Gemini Web Search│    │
-          │                  │  │                  │    │
-          └────────┬─────────┘  └────────┬─────────┘    │
+               If no results         If no results      ↓
+                   ↓                      ↓          Response
+             Direct Response     ┌──────────────────┐   │
+                   │             │ Gemini Web Search│   │
+                   │             │                  │   │
+                   │             └────────┬─────────┘   │
                    ↓                      ↓             │
                    └──────────────────────┴─────────────┘
                                   ↓
-                     Instagram DM Response
+                        Instagram DM Response
+                         (Powered by Gemini)
 ```   
 
 ## Data Sources
@@ -122,8 +123,8 @@ The application uses multiple data sources with intelligent fallbacks:
 - **NYC Restaurants**: Curated database of NYC restaurants with cuisine types, ratings, and locations.
   - Source: [NYC DOHMH Restaurant Inspections](https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j) (Managed via MongoDB)
 
-### Fallback: Gemini Web Search (Google Search Grounding)
-When local data sources return no results, the bot automatically uses **Gemini 2.0 Flash with Google Search** to find real-time information from the web. This ensures users always get helpful responses, even for queries outside the primary datasets.
+### Fallback: Gemini Web Search (Events Only)
+When local event APIs return no results, the bot automatically uses **Gemini 2.0 Flash with Google Search** to find real-time event information from the web. This ensures users find something to do even if the official city feeds are empty. Restaurant searches do not use this fallback.
 
 ## File Structure
 
@@ -145,7 +146,7 @@ When local data sources return no results, the bot automatically uses **Gemini 2
    - **If RESTAURANT**: 
      - Gemini extracts `cuisine`, `borough`, `priceLevel`, and `searchTerm`
      - Searches MongoDB database for matching restaurants
-     - **Fallback**: If no results, uses Gemini Web Search with extracted filters
+     - Returns results found in the database (no AI fallback if zero results)
    - **If EVENT**: 
      - Gemini extracts `category`, `date`, `borough`, and `searchTerm`
      - Fetches live data from NYC Permitted Events and NYC Parks APIs
@@ -153,7 +154,7 @@ When local data sources return no results, the bot automatically uses **Gemini 2
      - **Fallback**: If no results, uses Gemini Web Search with extracted filters
     - **If OTHER**: 
       - The bot informs the user that it only supports NYC restaurant and event searches.
-6. **Response sent** back to the user via Instagram DM (handled by `message_handler.js`).
+6. **Response sent** back to the user via Instagram DM (Powered by Gemini AI for classification, search extraction, and real-time event searches).
 
 ## Filtering System
 
@@ -225,7 +226,7 @@ The `searchTerm` is the logic that makes the bot flexible. Instead of only match
 - "Any cheap pizza spots in Brooklyn?"
 - "Italian restaurants near Times Square"
 - "Vegan options in Williamsburg"
-- "Top-rated steakhouses" *(uses web search if not in database)*
+- "Top-rated steakhouses"
 
 ### Other Queries (Rejected)
 - "What's the weather like today?" 
