@@ -242,7 +242,9 @@ Use your Google Search tool to find actual events. Provide a list with:
 - Date/Time
 - Precise Location
 
-Format it for an Instagram DM. Be direct. If none are found, state that clearly.`;
+Format it for an Instagram DM. Start directly with the results. 
+DO NOT include introductory phrases like "I have searched" or "Here are some events".
+If none are found, state that clearly without a preamble.`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
