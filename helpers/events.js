@@ -210,7 +210,7 @@ Only return valid JSON, no explanation.`;
 
   try {
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200, temperature: 0.1 } },
       { params: { key: GEMINI_API_KEY } }
     );
@@ -243,7 +243,7 @@ async function searchEventsWithGeminiWebSearch(query, filters) {
       `Keep the response short, friendly, and conversational for an Instagram DM.`;
 
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],

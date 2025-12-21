@@ -8,11 +8,7 @@ const geminiClient = axios.create({
     httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
-/**
- * Uses Gemini AI to classify a user query into RESTAURANT, EVENT, or OTHER.
- * @param {string} text The user's message
- * @returns {Promise<string>} 'RESTAURANT', 'EVENT', or 'OTHER'
- */
+// Classifies a user query into RESTAURANT, EVENT, or OTHER.
 async function classifyQuery(text) {
     if (!GEMINI_API_KEY) return 'OTHER';
 
@@ -29,7 +25,7 @@ Return ONLY one word: RESTAURANT, EVENT, or OTHER. No explanation.`;
 
     try {
         const response = await geminiClient.post(
-            'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
             {
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { maxOutputTokens: 10, temperature: 0.1 }
