@@ -233,20 +233,23 @@ async function searchEventsWithGeminiWebSearch(query, filters) {
   try {
     console.log(`Starting Gemini Web Search for: "${query}"...`);
 
+    const today = new Date().toISOString().split('T')[0];
     const prompt = `Find 5 UPCOMING real-time NYC events matching this request: "${query}"
 Context filters: ${JSON.stringify(filters)}
-Today's date is ${new Date().toISOString().split('T')[0]}.
+TODAY'S DATE: ${today} (YYYY-MM-DD)
 
-CRITICAL: Only include events occurring ON or AFTER today's date. Ignore any events that have already passed.
+CRITICAL VALIDATION STEP:
+1. Use Google Search to find events.
+2. For EACH event you consider, look at its specific date.
+3. EXPLICITLY COMPARE the event's date against TODAY'S DATE (${today}).
+4. ONLY include the event if it takes place on or after ${today}.
+5. If an event is from earlier this week, yesterday, or any past date, DISCARD IT. Even if it is a major event, if it has passed, it is useless.
 
-Use your Google Search tool to find actual events. Provide a list with:
-- Event Name
-- Date/Time
-- Precise Location
-
-Format it for an Instagram DM. Start directly with the results. 
-DO NOT include introductory phrases like "I have searched" or "Here are some events".
-If no upcoming events are found, state that clearly without a preamble.`;
+Output Layout:
+- Start directly with the results.
+- No conversational filler (no "I found...", no "Here are...").
+- For each event: [Event Name] | [Date] | [Location]
+- If no future events are found, say "I couldn't find any upcoming events matching your search."`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
