@@ -100,7 +100,7 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
                    ↓                      ↓       NYC events & food"
                If no results          If no results     ↓
                    ↓                      ↓         Response
-             Direct Response    ┌──────────────────┐    │
+               "No Results"     ┌──────────────────┐    │
                    │            │ Gemini Web Search│    │
                    │            │                  │    │
                    │            └────────┬─────────┘    │
