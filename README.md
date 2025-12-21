@@ -70,39 +70,90 @@ vercel
 ## Architecture
 
 ```bash
-Instagram DM → Facebook Webhook → Vercel (api.js) → helpers/query_router.js → helpers/events.js OR helpers/restaurants.js → Response
+Instagram DM → Facebook Webhook → Vercel (api/api.js) 
+                                      ↓
+                            helpers/message_handler.js
+                                      ↓
+                            helpers/query_router.js 
+                              (AI Classification) 
+                                      ↓
+                    ┌─────────────────┼─────────────────┐
+                    ↓                 ↓                 ↓
+             RESTAURANT            EVENT             OTHER
+          helpers/restaurants.js  helpers/events.js  (Restricted)
+                    ↓                 ↓                 ↓
+          ┌──────────────────┐  ┌──────────────────┐   │
+          │ Filter Extraction│  │ Filter Extraction│   │
+          │ (Gemini AI)      │  │ (Gemini AI)      │   │
+          │ • cuisine        │  │ • category       │   │
+          │ • borough        │  │ • date           │   │
+          │ • priceLevel     │  │ • borough        │   │
+          │ • searchTerm     │  │ • searchTerm     │   │
+          └────────┬─────────┘  └────────┬─────────┘   │
+                   ↓                      ↓             │
+          ┌──────────────────┐  ┌──────────────────┐   │
+          │ Apply Filters to │  │ Apply Filters to │   │
+          │ MongoDB Query    │  │ NYC APIs Data    │   │
+          └────────┬─────────┘  └────────┬─────────┘   │
+                   ↓                      ↓             ↓
+               Results?              Results?     "I only help with
+                   ↓                      ↓        restaurants..."
+               If no results          If no results     ↓
+                   ↓                      ↓         Response
+          ┌──────────────────┐  ┌──────────────────┐   │
+          │ Gemini Web Search│  │ Gemini Web Search│   │
+          │ (with filters)   │  │ (with filters)   │   │
+          └────────┬─────────┘  └────────┬─────────┘   │
+                   ↓                      ↓             │
+                   └──────────────────────┴─────────────┘
+                                  ↓
+                     Instagram DM Response
 ```
 
-## Data Sets
+## Data Sources
 
-The application aggregates real-time data from official NYC agencies:
+The application uses multiple data sources with intelligent fallbacks:
 
+### Primary Data Sources
 - **NYC Permitted Events**: Live data on parades, street fairs, block parties, and film shoots.
   - Source: [NYC Open Data - NYC Permitted Event Listings](https://data.cityofnewyork.us/City-Government/NYC-Permitted-Event-Listings/tvpp-9vvx)
 - **NYC Parks Events**: Live feed of activities including concerts, tours, kids programs, and fitness classes in NYC parks.
   - Source: [NYC Parks - Events RSS Feed](https://catalog.data.gov/dataset/nyc-parks-public-events-upcoming-14-days/resource/0ef56b88-24ce-46b9-b45b-7af20021c0ed)
-- **NYC Restaurants**: Snapshot of NYC restaurants with cuisine types, boroughs, and health-related metadata.
+- **NYC Restaurants**: Curated database of NYC restaurants with cuisine types, ratings, and locations.
   - Source: [NYC DOHMH Restaurant Inspections](https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j) (Managed via MongoDB)
+
+### Fallback: Gemini Web Search (Google Search Grounding)
+When local data sources return no results, the bot automatically uses **Gemini 2.0 Flash with Google Search** to find real-time information from the web. This ensures users always get helpful responses, even for queries outside the primary datasets.
 
 ## File Structure
 
-- **`api/api.js`** - Express routes and webhook handlers
-- **`helpers/query_router.js`** - AI-powered intent classifier (RESTAURANT vs EVENT vs GENERAL)
-- **`helpers/events.js`** - Event fetching, filtering, and AI search extraction
-- **`helpers/restaurants.js`** - MongoDB-backed restaurant search and AI extraction
+- **`api/api.js`** - Express server, webhook verification, and route handlers
+- **`helpers/message_handler.js`** - **Central DM processor**: routes messages and handles Instagram messaging
+- **`helpers/query_router.js`** - AI-powered intent classifier (RESTAURANT vs EVENT vs OTHER)
+- **`helpers/events.js`** - Event search with filter extraction and web search fallback
+- **`helpers/restaurants.js`** - MongoDB restaurant search with AI filter extraction
 - **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` 
 - **`scripts/`** - Data extraction scripts for populating/refreshing filters
 
-## Flow
+## Message Processing Flow
 
 1. **User sends DM** to your Instagram account.
-2. **Facebook webhook** delivers the message to your server.
-3. **Intent Classification**: The query is sent to **Gemini AI** (`query_router.js`) to determine if the user is looking for a restaurant, an event, or just chatting.
-4. **Entity Extraction & Search**:
-   - **If RESTAURANT**: Gemini extracts `cuisine`, `borough`, and `priceLevel`, then searches the MongoDB database.
-   - **If EVENT**: Gemini extracts `category`, `date`, and `searchTerm`, then fetches live data from NYC Open Data and NYC Parks.
-   - **If GENERAL**: Gemini provides a conversational response directly.
-5. **Response sent** back to the user via Instagram DM.
+2. **Facebook webhook** delivers the message to `api/api.js`.
+3. **Message Handler** (`message_handler.js`) receives and processes the DM.
+4. **Intent Classification**: The query is sent to **Gemini AI** (`query_router.js`) to determine if the user is looking for a restaurant, an event, or something else.
+5. **Entity Extraction & Search**:
+   - **If RESTAURANT**: 
+     - Gemini extracts `cuisine`, `borough`, `priceLevel`, and `searchTerm`
+     - Searches MongoDB database for matching restaurants
+     - **Fallback**: If no results, uses Gemini Web Search with extracted filters
+   - **If EVENT**: 
+     - Gemini extracts `category`, `date`, `borough`, and `searchTerm`
+     - Fetches live data from NYC Permitted Events and NYC Parks APIs
+     - Applies extracted filters to find matching events
+     - **Fallback**: If no results, uses Gemini Web Search with extracted filters
+    - **If OTHER**: 
+      - The bot informs the user that it only supports NYC restaurant and event searches.
+6. **Response sent** back to the user via Instagram DM (handled by `message_handler.js`).
 
 ## Filtering System
 
@@ -155,12 +206,26 @@ Supported fields extracted by Gemini:
 
 ## Supported Queries
 
+### Event Queries
 - "What concerts are in Brooklyn this weekend?"
 - "Any parades in Manhattan?"
 - "Events in Queens tomorrow"
 - "Show me festivals in December"
+- "Free yoga classes in Central Park"
+- "Art exhibitions this month" *(uses web search if not in local data)*
+
+### Restaurant Queries
 - "Best sushi in Manhattan"
 - "Any cheap pizza spots in Brooklyn?"
+- "Italian restaurants near Times Square"
+- "Vegan options in Williamsburg"
+- "Top-rated steakhouses" *(uses web search if not in database)*
+
+### Other Queries (Rejected)
+- "What's the weather like today?" 
+- "Tell me about the Statue of Liberty" 
+- "Who is the president?"
+*(Bot will respond: "I'm sorry, I can only help you find restaurants and events in NYC...")*
 
 ## API Endpoints
 

@@ -75,14 +75,9 @@ async function processDM(senderId, messageText) {
         return;
     }
 
-    // 3) General Gemini (category === 'GENERAL')
-    try {
-        console.log('Calling Gemini for general response...');
-        reply = await getGeminiResponse(messageText);
-    } catch (err) {
-        console.error('Gemini failed, using fallback');
-        reply = "Thanks for your message! We'll get back to you shortly.";
-    }
+    // 3) Everything else (category === 'OTHER')
+    console.log('Bot restricted to restaurants/events only.');
+    reply = "I'm sorry, I can only help you find restaurants and events in NYC. Feel free to ask about food or things to do!";
 
     await sendInstagramMessage(senderId, reply);
 }
