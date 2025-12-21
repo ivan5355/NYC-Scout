@@ -1,6 +1,6 @@
 const { classifyQuery } = require('./query_router');
 const { searchRestaurants, formatRestaurantResults } = require('./restaurants');
-const { searchEvents, formatEventResults, getGeminiResponse } = require('./events');
+const { searchEvents, formatEventResults } = require('./events');
 const axios = require('axios');
 const https = require('https');
 
@@ -53,7 +53,7 @@ async function processDM(senderId, messageText) {
             reply = formatRestaurantResults(searchResult);
         } catch (err) {
             console.error('Restaurant search failed:', err.message);
-            reply = await safeGeminiFallback(messageText);
+            reply = "I'm sorry, I'm having trouble searching for restaurants right now. Please try again in a moment!";
         }
 
         await sendInstagramMessage(senderId, reply);
@@ -68,7 +68,7 @@ async function processDM(senderId, messageText) {
             reply = formatEventResults(searchResult);
         } catch (err) {
             console.error('Event search failed:', err.message);
-            reply = await safeGeminiFallback(messageText);
+            reply = "I'm sorry, I'm having trouble searching for events right now. Please try again in a moment!";
         }
 
         await sendInstagramMessage(senderId, reply);
@@ -82,13 +82,6 @@ async function processDM(senderId, messageText) {
     await sendInstagramMessage(senderId, reply);
 }
 
-async function safeGeminiFallback(messageText) {
-    try {
-        return await getGeminiResponse(messageText);
-    } catch {
-        return "Sorry — something went wrong. Try again!";
-    }
-}
 
 /* =====================
    INSTAGRAM MESSAGING

@@ -226,30 +226,6 @@ Only return valid JSON, no explanation.`;
   }
 }
 
-// Generate conversational responses with web search grounding
-async function getGeminiResponse(userMessage) {
-  if (!GEMINI_API_KEY) return 'Thanks for reaching out!';
-
-  try {
-    const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent',
-      {
-        contents: [{
-          parts: [{ text: `You are a helpful NYC assistant on Instagram. Help the user with their request: "${userMessage}". Use Google Search if you need current info (weather, news, etc). Keep replies concise (1-3 sentences max).` }]
-        }],
-        tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 200, temperature: 0.7 }
-      },
-      { params: { key: GEMINI_API_KEY } }
-    );
-
-    return response.data.candidates?.[0]?.content?.parts?.[0]?.text || 'Thanks for reaching out!';
-  } catch (err) {
-    console.error('Gemini error:', err.message);
-    throw err;
-  }
-}
-
 // Use Gemini Web Search to find events
 async function searchEventsWithGeminiWebSearch(query, filters) {
   if (!GEMINI_API_KEY) return null;
@@ -336,11 +312,9 @@ function formatEventResults(searchResult) {
   return response;
 }
 
-
 module.exports = {
   // events API
   fetchAllEvents,
   searchEvents,
   formatEventResults,
-  getGeminiResponse,
 };
