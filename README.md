@@ -82,28 +82,28 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
              RESTAURANT            EVENT             OTHER
           helpers/restaurants.js  helpers/events.js  (Restricted)
                     ↓                 ↓                 ↓
-          ┌──────────────────┐  ┌──────────────────┐   │
-          │ Filter Extraction│  │ Filter Extraction│   │
-          │ (Gemini AI)      │  │ (Gemini AI)      │   │
-          │ • cuisine        │  │ • category       │   │
-          │ • borough        │  │ • date           │   │
-          │ • priceLevel     │  │ • borough        │   │
-          │ • searchTerm     │  │ • searchTerm     │   │
-          └────────┬─────────┘  └────────┬─────────┘   │
-                   ↓                      ↓            │
-          ┌──────────────────┐  ┌──────────────────┐   │
-          │ Apply Filters to │  │ Apply Filters to │   │
-          │ MongoDB Query    │  │ NYC APIs Data    │   │
-          └────────┬─────────┘  └────────┬─────────┘   │
+          ┌──────────────────┐  ┌──────────────────┐    │
+          │ Filter Extraction│  │ Filter Extraction│    │
+          │ (Gemini AI)      │  │ (Gemini AI)      │    │
+          │ • cuisine        │  │ • category       │    │
+          │ • borough        │  │ • date           │    │
+          │ • priceLevel     │  │ • borough        │    │
+          │ • searchTerm     │  │ • searchTerm     │    │
+          └────────┬─────────┘  └────────┬─────────┘    │
+                   ↓                      ↓             │
+          ┌──────────────────┐  ┌──────────────────┐    │
+          │ Apply Filters to │  │ Apply Filters to │    │
+          │ Restaurants DB   │  │ NYC APIs (Events)│    │
+          └────────┬─────────┘  └────────┬─────────┘    │
                    ↓                      ↓             ↓
-               Results?              Results?     "I only help with
-                   ↓                      ↓        restaurants..."
-               If no results         If no results      ↓
-                   ↓                      ↓          Response
-             Direct Response     ┌──────────────────┐   │
-                   │             │ Gemini Web Search│   │
-                   │             │                  │   │
-                   │             └────────┬─────────┘   │
+               Results?               Results?    "I only help with
+                   ↓                      ↓       NYC events & food"
+               If no results          If no results     ↓
+                   ↓                      ↓         Response
+             Direct Response    ┌──────────────────┐    │
+                   │            │ Gemini Web Search│    │
+                   │            │                  │    │
+                   │            └────────┬─────────┘    │
                    ↓                      ↓             │
                    └──────────────────────┴─────────────┘
                                   ↓
@@ -120,13 +120,13 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
           api/api.js
                 |
                 v
-        handleDM(request.body)
+        message_handler.handleDM(request.body)
                 |
                 v
         message_handler.processDM(senderId, text)
                 |
                 v
-          query_router.classifyQuery(text)
+         query_router.classifyQuery(text)
                 |
                 +-------------------+
                 |                   |
