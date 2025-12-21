@@ -231,31 +231,49 @@ async function searchEventsWithGeminiWebSearch(query, filters) {
   if (!GEMINI_API_KEY) return null;
 
   try {
-    let searchContext = `User query: "${query}"\n`;
-    if (filters.borough) searchContext += `Borough: ${filters.borough}\n`;
-    if (filters.category) searchContext += `Category: ${filters.category}\n`;
-    if (filters.date) searchContext += `Date criteria: ${JSON.stringify(filters.date)}\n`;
-    if (filters.searchTerm) searchContext += `Search term: ${filters.searchTerm}\n`;
+    console.log(`Starting Gemini Web Search for: "${query}"...`);
 
-    const prompt = `You are a helpful NYC assistant. A user is looking for events: "${query}"\n` +
-      `Context: ${JSON.stringify(filters)}\n\n` +
-      `Use your Google Search tool to find actual, real-time events in NYC that match this request. ` +
-      `Do NOT say "I will search" or "Searching for". Instead, provide a list of matching events directly. ` +
-      `For each event, include the name, date, and location. ` +
-      `If no events are found, just say you couldn't find any. ` +
-      `Keep the tone friendly and the response concise for an Instagram DM.`;
+    const prompt = `Find real-time NYC events matching this request: "${query}"
+Context filters: ${JSON.stringify(filters)}
+Today's date is ${new Date().toISOString().split('T')[0]}.
+
+Use your Google Search tool to find actual events. Provide a list with:
+- Event Name
+- Date/Time
+- Precise Location
+
+Format it for an Instagram DM. Be direct. If none are found, state that clearly.`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 800, temperature: 0.1 }
+        generationConfig: { maxOutputTokens: 1000, temperature: 0.1 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
 
-    return response.data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    const candidates = response.data.candidates?.[0];
+    const parts = candidates?.content?.parts || [];
+
+    // Log for debugging (the user will see this in their console/logs)
+    console.log(`Gemini response received. Parts: ${parts.length}`);
+
+    // Combine all text parts. Grounding can return multiple parts.
+    const text = parts
+      .map(p => p.text)
+      .filter(t => typeof t === 'string' && t.length > 0)
+      .join('\n')
+      .trim();
+
+    if (text) {
+      console.log(`Web search successful. Response length: ${text.length}`);
+      return text;
+    }
+
+    console.log('Gemini web search returned no text content.');
+    return null;
   } catch (err) {
     console.error('Gemini web search failed:', err.response?.data || err.message);
     return null;
