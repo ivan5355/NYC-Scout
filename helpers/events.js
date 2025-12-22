@@ -171,6 +171,74 @@ function applyFilters(events, filters) {
   return results;
 }
 
+// Heuristic fallback for event extraction
+function extractEventFiltersHeuristic(query) {
+  console.log('🔍 Executing extractEventFiltersHeuristic (Heuristic fallback)...');
+  const filters = {};
+  const lowerQuery = query.toLowerCase();
+
+  // Boroughs
+  const boroughs = {
+    'manhattan': 'Manhattan', 'brooklyn': 'Brooklyn', 'queens': 'Queens', 'bronx': 'Bronx', 'staten island': 'Staten Island'
+  };
+  for (const [key, val] of Object.entries(boroughs)) {
+    if (lowerQuery.includes(key)) {
+      filters.borough = val;
+      break;
+    }
+  }
+
+  // Categories (Dynamic load from JSON)
+  let categories = [];
+  try {
+    const filtersPath = path.join(__dirname, '../data/event_filters.json');
+    if (fs.existsSync(filtersPath)) {
+      const filtersData = JSON.parse(fs.readFileSync(filtersPath, 'utf8'));
+      const permitted = filtersData.permitted_events?.event_type || [];
+      const parks = filtersData.parks_events?.categories || [];
+      // Combine and deduplicate
+      categories = [...new Set([...permitted, ...parks])];
+    }
+  } catch (err) {
+    console.error('Failed to load heuristic categories:', err.message);
+    // Fallback if file load fails
+    categories = ['concert', 'festival', 'parade', 'show', 'theater', 'music', 'art', 'museum', 'sports', 'game', 'tour', 'walk', 'run', 'market'];
+  }
+  for (const cat of categories) {
+    if (lowerQuery.includes(cat)) {
+      filters.category = cat;
+      break;
+    }
+  }
+
+  // Dates
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+
+  if (lowerQuery.includes('today')) {
+    filters.date = { type: 'specific', date: todayStr };
+  } else if (lowerQuery.includes('tomorrow')) {
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    filters.date = { type: 'specific', date: tomorrow.toISOString().split('T')[0] };
+  } else if (lowerQuery.includes('weekend')) {
+    // Basic heuristic: just look for upcoming Friday/Saturday/Sunday
+    // (For full robustness we'd calculate dates, but this is a fallback)
+    filters.searchTerm = (filters.searchTerm || '') + ' weekend';
+  }
+
+  // If no category found, treat remaining as search term
+  if (!filters.category) {
+    const stopWords = ['event', 'events', 'in', 'on', 'at', 'the', 'a', 'find', 'me', 'upcoming', 'today', 'tomorrow', 'weekend'];
+    const words = lowerQuery.split(/\s+/).filter(w => !stopWords.includes(w) && !Object.keys(boroughs).includes(w));
+    if (words.length > 0) {
+      filters.searchTerm = words.join(' ');
+    }
+  }
+
+  return filters;
+}
+
 // Use Gemini AI to parse complex queries
 async function extractFiltersWithGemini(userId, query) {
   const { checkAndIncrementGemini } = require('./rate_limiter');
@@ -180,9 +248,9 @@ async function extractFiltersWithGemini(userId, query) {
     return {};
   }
 
-  if (!checkAndIncrementGemini(userId)) {
-    console.log(`⚠️ User ${userId} exceeded Gemini limit in extractFiltersWithGemini. Returning empty filters.`);
-    return {};
+  if (!await checkAndIncrementGemini(userId)) {
+    console.log(`⚠️ User ${userId} exceeded Gemini limit in extractFiltersWithGemini. Using heuristic fallback.`);
+    return extractEventFiltersHeuristic(query);
   }
 
   console.log('Executing extractFiltersWithGemini...');
@@ -239,7 +307,7 @@ async function searchEventsWithGeminiWebSearch(userId, query, filters) {
 
   if (!GEMINI_API_KEY) return null;
 
-  if (!checkAndIncrementSearch(userId)) {
+  if (!await checkAndIncrementSearch(userId)) {
     console.log(`⚠️ User ${userId} exceeded Gemini Web Search limit.`);
     return null;
   }

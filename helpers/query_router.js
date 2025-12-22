@@ -14,9 +14,21 @@ const { checkAndIncrementGemini } = require('./rate_limiter');
 async function classifyQuery(userId, text) {
     if (!GEMINI_API_KEY) return 'OTHER';
 
-    if (!checkAndIncrementGemini(userId)) {
-        console.warn(`User ${userId} exceeded Gemini rate limit.`);
-        return 'LIMIT_EXCEEDED';
+    // If rate limit exceeded, fallback to heuristic classification
+    if (!await checkAndIncrementGemini(userId)) {
+        console.warn(`User ${userId} exceeded Gemini rate limit. Using heuristic classification.`);
+
+        const lowerText = text.toLowerCase();
+
+        // Basic keywords for Restaurants
+        const restKeywords = ['food', 'eat', 'restaurant', 'cuisine', 'dinner', 'lunch', 'breakfast', 'pizza', 'sushi', 'burger'];
+        if (restKeywords.some(k => lowerText.includes(k))) return 'RESTAURANT';
+
+        // Basic keywords for Events
+        const eventKeywords = ['event', 'concert', 'show', 'festival', 'park', 'doing', 'weekend', 'today', 'tonight', 'music'];
+        if (eventKeywords.some(k => lowerText.includes(k))) return 'EVENT';
+
+        return 'OTHER';
     }
 
     console.log(`Classifying query: "${text}"`);

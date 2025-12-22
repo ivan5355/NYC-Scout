@@ -1,79 +1,114 @@
-const fs = require('fs');
-const path = require('path');
+const { MongoClient } = require('mongodb');
 
-const DATA_FILE = path.join(__dirname, '..', 'data', 'user_limits.json');
+// Validate required environment variables
+const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 
 const LIMITS = {
     GEMINI_REQUESTS: 20,
     WEB_SEARCHES: 4
 };
 
-function loadData() {
-    if (!fs.existsSync(DATA_FILE)) {
-        return {};
+let mongoClient = null;
+let limitsCollection = null;
+
+async function connectToMongoDB() {
+    if (limitsCollection) return limitsCollection;
+
+    if (!MONGODB_URI) {
+        console.error('MongoDB URI not found in environment variables (Rate Limiter)');
+        return null;
     }
+
     try {
-        return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+        mongoClient = new MongoClient(MONGODB_URI);
+        await mongoClient.connect();
+        const db = mongoClient.db('nyc-events');
+        limitsCollection = db.collection('user_limits');
+        console.log('Connected to MongoDB user_limits collection');
+        return limitsCollection;
     } catch (err) {
-        console.error('Error loading rate limit data:', err);
-        return {};
+        console.error('Failed to connect to MongoDB in rate_limiter:', err.message);
+        return null;
     }
 }
 
-function saveData(data) {
+async function checkAndIncrementGemini(userId) {
+    const collection = await connectToMongoDB();
+    // Fail open if database is unreachable so we don't block users due to infrastructure issues
+    if (!collection) return true;
+
+    const today = new Date().toISOString().split('T')[0];
+
     try {
-        fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+        const userRecord = await collection.findOne({ userId });
+
+        // Reset if new day or new user
+        if (!userRecord || userRecord.date !== today) {
+            await collection.updateOne(
+                { userId },
+                { $set: { date: today, gemini: 1, search: 0 } },
+                { upsert: true }
+            );
+            console.log(`User ${userId} Gemini usage: 1/${LIMITS.GEMINI_REQUESTS} (Reset)`);
+            return true;
+        }
+
+        // Check limit
+        if (userRecord.gemini >= LIMITS.GEMINI_REQUESTS) {
+            console.log(`User ${userId} Gemini limit exceeded: ${userRecord.gemini}/${LIMITS.GEMINI_REQUESTS}`);
+            return false;
+        }
+
+        // Increment
+        await collection.updateOne(
+            { userId },
+            { $inc: { gemini: 1 } }
+        );
+        console.log(`User ${userId} Gemini usage: ${userRecord.gemini + 1}/${LIMITS.GEMINI_REQUESTS}`);
+        return true;
     } catch (err) {
-        console.error('Error saving rate limit data:', err);
+        console.error('Error checking Gemini rate limit:', err);
+        return true; // Fail open
     }
 }
 
-function getTodayKey() {
-    return new Date().toISOString().split('T')[0];
-}
+async function checkAndIncrementSearch(userId) {
+    const collection = await connectToMongoDB();
+    if (!collection) return true;
 
-function checkAndIncrementGemini(userId) {
-    const data = loadData();
-    const today = getTodayKey();
+    const today = new Date().toISOString().split('T')[0];
 
-    if (!data[userId]) {
-        data[userId] = { date: today, gemini: 0, search: 0 };
+    try {
+        const userRecord = await collection.findOne({ userId });
+
+        // Reset if new day or new user
+        if (!userRecord || userRecord.date !== today) {
+            await collection.updateOne(
+                { userId },
+                { $set: { date: today, gemini: 0, search: 1 } },
+                { upsert: true }
+            );
+            console.log(`User ${userId} Web Search usage: 1/${LIMITS.WEB_SEARCHES} (Reset)`);
+            return true;
+        }
+
+        // Check limit
+        if (userRecord.search >= LIMITS.WEB_SEARCHES) {
+            console.log(`User ${userId} Web Search limit exceeded: ${userRecord.search}/${LIMITS.WEB_SEARCHES}`);
+            return false;
+        }
+
+        // Increment
+        await collection.updateOne(
+            { userId },
+            { $inc: { search: 1 } }
+        );
+        console.log(`User ${userId} Web Search usage: ${userRecord.search + 1}/${LIMITS.WEB_SEARCHES}`);
+        return true;
+    } catch (err) {
+        console.error('Error checking Web Search rate limit:', err);
+        return true; // Fail open
     }
-
-    if (data[userId].date !== today) {
-        data[userId] = { date: today, gemini: 0, search: 0 };
-    }
-
-    if (data[userId].gemini >= LIMITS.GEMINI_REQUESTS) {
-        return false;
-    }
-
-    data[userId].gemini += 1;
-    saveData(data);
-    console.log(`User ${userId} Gemini usage: ${data[userId].gemini}/${LIMITS.GEMINI_REQUESTS}`);
-    return true;
-}
-
-function checkAndIncrementSearch(userId) {
-    const data = loadData();
-    const today = getTodayKey();
-
-    if (!data[userId]) {
-        data[userId] = { date: today, gemini: 0, search: 0 };
-    }
-
-    if (data[userId].date !== today) {
-        data[userId] = { date: today, gemini: 0, search: 0 };
-    }
-
-    if (data[userId].search >= LIMITS.WEB_SEARCHES) {
-        return false;
-    }
-
-    data[userId].search += 1;
-    saveData(data);
-    console.log(`User ${userId} Web Search usage: ${data[userId].search}/${LIMITS.WEB_SEARCHES}`);
-    return true;
 }
 
 module.exports = {

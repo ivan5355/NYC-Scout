@@ -45,12 +45,6 @@ async function processDM(senderId, messageText) {
     let reply = null;
     const category = await classifyQuery(senderId, messageText);
 
-    if (category === 'LIMIT_EXCEEDED') {
-        reply = "You have reached your daily limit for AI requests. Please try again tomorrow!";
-        await sendInstagramMessage(senderId, reply);
-        return;
-    }
-
     // 1) Restaurants
     if (category === 'RESTAURANT') {
         try {

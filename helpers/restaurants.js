@@ -27,7 +27,7 @@ try {
 // Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI or MONGO_URI environment variable is required');
+  console.error(' MONGODB_URI or MONGO_URI environment variable is required');
   process.exit(1);
 }
 
@@ -120,9 +120,16 @@ function extractRestaurantFilters(query) {
 }
 
 // Extract restaurant filters using Gemini AI
-async function extractRestaurantFiltersWithGemini(query) {
+async function extractRestaurantFiltersWithGemini(userId, query) {
+  const { checkAndIncrementGemini } = require('./rate_limiter');
+
   if (!GEMINI_API_KEY) {
     console.log('⚠️ GEMINI_API_KEY missing, falling back to heuristic extraction.');
+    return extractRestaurantFilters(query);
+  }
+
+  if (!await checkAndIncrementGemini(userId)) {
+    console.log(`⚠️ User ${userId} exceeded Gemini limit. Falling back to heuristic extraction.`);
     return extractRestaurantFilters(query);
   }
 
@@ -168,13 +175,13 @@ Return ONLY a valid JSON object.`;
 }
 
 // Search restaurants using MongoDB
-async function searchRestaurants(query, preExtractedFilters = null) {
+async function searchRestaurants(userId, query, preExtractedFilters = null) {
   const collection = await connectToMongoDB();
   if (!collection) {
     return { query, filters: {}, results: [], count: 0 };
   }
 
-  const filters = preExtractedFilters || await extractRestaurantFiltersWithGemini(query);
+  const filters = preExtractedFilters || await extractRestaurantFiltersWithGemini(userId, query);
   console.log('Applying filters to MongoDB query:', JSON.stringify(filters, null, 2));
   const mongoQuery = {};
 
