@@ -287,3 +287,20 @@ The `searchTerm` is the logic that makes the bot flexible. Instead of only match
 
 
 
+
+## Rate Limits & Fallback
+The system implements strict rate limits to manage API costs, persisted in **MongoDB** (`user_limits` collection).
+
+### Limits
+1. **AI Requests (Gemini)**: Max **20 requests per user/day**. This includes general query classification and smart filter extraction.
+2. **Web Searches (Gemini)**: Max **4 searches per user/day**. This is a more expensive operation used for finding events not in the local database.
+
+### Fallback Behavior
+When a user hits their limits, the bot *does not* stop working. Instead, it degrades gracefully to standard, non-AI search methods:
+
+| Feature | Normal (Limit < 20) | Fallback (Limit Reached) |
+| :--- | :--- | :--- |
+| **Query Classification** | Gemini AI classifies intent (Eat vs Event). | **Keyword Matching**: Scans for terms like "food", "pizza" vs "concert", "show". |
+| **Restaurant Search** | Gemini AI extracts complex filters (e.g., "romantic Italian"). | **Heuristic Extraction**: Matches specific keywords against known cuisines and boroughs. |
+| **Event Search** | Gemini AI extracts smart filters (Category, Date, etc.). | **Heuristic Extraction**: Matches keywords against `event_filters.json` categories and simple date terms ("today", "weekend"). |
+| **Web Search** | If no local events found, AI searches Google. | **Skipped**: Returns only local results. If none found, simply reports "No events found". |
