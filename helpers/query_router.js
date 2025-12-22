@@ -8,9 +8,16 @@ const geminiClient = axios.create({
     httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
+const { checkAndIncrementGemini } = require('./rate_limiter');
+
 // Classifies a user query into RESTAURANT, EVENT, or OTHER.
-async function classifyQuery(text) {
+async function classifyQuery(userId, text) {
     if (!GEMINI_API_KEY) return 'OTHER';
+
+    if (!checkAndIncrementGemini(userId)) {
+        console.warn(`User ${userId} exceeded Gemini rate limit.`);
+        return 'LIMIT_EXCEEDED';
+    }
 
     console.log(`Classifying query: "${text}"`);
 

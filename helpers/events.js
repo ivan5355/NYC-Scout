@@ -172,9 +172,16 @@ function applyFilters(events, filters) {
 }
 
 // Use Gemini AI to parse complex queries
-async function extractFiltersWithGemini(query) {
+async function extractFiltersWithGemini(userId, query) {
+  const { checkAndIncrementGemini } = require('./rate_limiter');
+
   if (!GEMINI_API_KEY) {
     console.log('⚠️ GEMINI_API_KEY missing, returning empty filters.');
+    return {};
+  }
+
+  if (!checkAndIncrementGemini(userId)) {
+    console.log(`⚠️ User ${userId} exceeded Gemini limit in extractFiltersWithGemini. Returning empty filters.`);
     return {};
   }
 
@@ -204,7 +211,7 @@ Query: "${query}"
 Return a JSON object with these fields (only include fields that are mentioned):
 - date: object with "type" (specific/range/month) and relevant date fields
 - category: pick the best fit from [${categories.join(', ')}]
-- borough: one of [${boroughs.join(', ')}]
+- borough: one of " "Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"
 - searchTerm: any specific keyword the user mentioned (e.g. "concert", "music", "yoga", "art")
 Only return valid JSON, no explanation.`;
 
@@ -227,8 +234,15 @@ Only return valid JSON, no explanation.`;
 }
 
 // Use Gemini Web Search to find events
-async function searchEventsWithGeminiWebSearch(query, filters) {
+async function searchEventsWithGeminiWebSearch(userId, query, filters) {
+  const { checkAndIncrementSearch } = require('./rate_limiter');
+
   if (!GEMINI_API_KEY) return null;
+
+  if (!checkAndIncrementSearch(userId)) {
+    console.log(`⚠️ User ${userId} exceeded Gemini Web Search limit.`);
+    return null;
+  }
 
   try {
     console.log(`Starting Gemini Web Search for: "${query}"...`);
@@ -288,9 +302,9 @@ Output Layout:
 }
 
 // Main search function
-async function searchEvents(query) {
+async function searchEvents(userId, query) {
   const [filters, events] = await Promise.all([
-    extractFiltersWithGemini(query),
+    extractFiltersWithGemini(userId, query),
     fetchAllEvents()
   ]);
 
@@ -300,7 +314,7 @@ async function searchEvents(query) {
   // FALLBACK: If no results found in local APIs, use Gemini Web Search
   if (results.length === 0 && GEMINI_API_KEY) {
     console.log('No local events found. Falling back to Gemini Web Search...');
-    const webSearchResults = await searchEventsWithGeminiWebSearch(query, filters);
+    const webSearchResults = await searchEventsWithGeminiWebSearch(userId, query, filters);
     if (webSearchResults) {
       return { query, filters, results: [], count: 0, webSearchResponse: webSearchResults };
     }

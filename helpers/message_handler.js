@@ -43,13 +43,19 @@ async function processDM(senderId, messageText) {
     console.log(`Incoming DM from ${senderId}: ${messageText}`);
 
     let reply = null;
-    const category = await classifyQuery(messageText);
+    const category = await classifyQuery(senderId, messageText);
+
+    if (category === 'LIMIT_EXCEEDED') {
+        reply = "You have reached your daily limit for AI requests. Please try again tomorrow!";
+        await sendInstagramMessage(senderId, reply);
+        return;
+    }
 
     // 1) Restaurants
     if (category === 'RESTAURANT') {
         try {
             console.log('Processing as restaurant query...');
-            const searchResult = await searchRestaurants(messageText);
+            const searchResult = await searchRestaurants(senderId, messageText);
             reply = formatRestaurantResults(searchResult);
         } catch (err) {
             console.error('Restaurant search failed:', err.message);
@@ -64,7 +70,7 @@ async function processDM(senderId, messageText) {
     if (category === 'EVENT') {
         try {
             console.log('Processing as event query...');
-            const searchResult = await searchEvents(messageText);
+            const searchResult = await searchEvents(senderId, messageText);
             reply = formatEventResults(searchResult);
         } catch (err) {
             console.error('Event search failed:', err.message);
