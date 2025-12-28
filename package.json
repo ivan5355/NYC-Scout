@@ -3,10 +3,20 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
+  "scripts": {
+    "start": "node api/api.js",
+    "dev": "node api/api.js",
+    "build:frontend": "cd frontend && npm install && npm run build",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "npm run build:frontend"
+  },
   "dependencies": {
-    "express": "^4.19.2",
+    "axios": "^1.7.9",
     "body-parser": "^1.20.2",
+    "cheerio": "^1.1.2",
+    "dotenv": "^16.6.1",
+    "express": "^4.19.2",
     "mongodb": "^6.5.0",
-    "axios": "^1.7.9"
+    "rss-parser": "^3.13.0"
   }
 }

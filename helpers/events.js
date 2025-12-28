@@ -2,6 +2,15 @@ const axios = require('axios');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { MongoClient } = require('mongodb');
+
+// Load environment variables from .env.local or .env (must be first!)
+try {
+  require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+  require('dotenv').config(); // Also load .env if .env.local doesn't exist
+} catch (err) {
+  console.warn('⚠️  dotenv failed to load in events.js:', err.message);
+}
 
 const {
   searchRestaurants,
@@ -205,7 +214,7 @@ function extractEventFiltersHeuristic(query) {
     categories = ['concert', 'festival', 'parade', 'show', 'theater', 'music', 'art', 'museum', 'sports', 'game', 'tour', 'walk', 'run', 'market'];
   }
   for (const cat of categories) {
-    if (lowerQuery.includes(cat)) {
+    if (lowerQuery.includes(cat.toLowerCase())) {
       filters.category = cat;
       break;
     }
@@ -222,8 +231,6 @@ function extractEventFiltersHeuristic(query) {
     tomorrow.setDate(tomorrow.getDate() + 1);
     filters.date = { type: 'specific', date: tomorrow.toISOString().split('T')[0] };
   } else if (lowerQuery.includes('weekend')) {
-    // Basic heuristic: just look for upcoming Friday/Saturday/Sunday
-    // (For full robustness we'd calculate dates, but this is a fallback)
     filters.searchTerm = (filters.searchTerm || '') + ' weekend';
   }
 
@@ -240,12 +247,12 @@ function extractEventFiltersHeuristic(query) {
 }
 
 // Use Gemini AI to parse complex queries
-async function extractFiltersWithGemini(userId, query) {
+async function extractFiltersWithGemini(userId, query, history = []) {
   const { checkAndIncrementGemini } = require('./rate_limiter');
 
   if (!GEMINI_API_KEY) {
     console.log('⚠️ GEMINI_API_KEY missing, returning empty filters.');
-    return {};
+    return extractEventFiltersHeuristic(query);
   }
 
   if (!await checkAndIncrementGemini(userId)) {
@@ -274,20 +281,26 @@ async function extractFiltersWithGemini(userId, query) {
   }
 
   const today = new Date().toISOString().split('T')[0];
-  const prompt = `Extract event search filters from this query. Today's date is ${today}.
+  const historyContext = history.length > 0 
+    ? `Recent conversation context:\n${history.map(m => `${m.role}: ${m.content}`).join('\n')}\n\n`
+    : '';
+
+  const prompt = `${historyContext}Extract event search filters from this new query. Today's date is ${today}.
 Query: "${query}"
-Return a JSON object with these fields (only include fields that are mentioned):
+
+Guidelines:
+- If context is provided, combine it with the new query to extract all relevant filters.
 - date: object with "type" (specific/range/month) and relevant date fields
 - category: pick the best fit from [${categories.join(', ')}]
 - borough: one of " "Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"
 - searchTerm: any specific keyword the user mentioned (e.g. "concert", "music", "yoga", "art")
-Only return valid JSON, no explanation.`;
+
+Return ONLY valid JSON, no explanation.`;
 
   try {
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
-      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200, temperature: 0.1 } },
-      { params: { key: GEMINI_API_KEY } }
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200, temperature: 0.1 } }
     );
 
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -334,13 +347,12 @@ Output Layout:
 - If no future events are found, say "I couldn't find any upcoming events matching your search."`;
 
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],
         generationConfig: { maxOutputTokens: 1000, temperature: 0.1 }
-      },
-      { params: { key: GEMINI_API_KEY } }
+      }
     );
 
     const candidates = response.data.candidates?.[0];
@@ -370,9 +382,9 @@ Output Layout:
 }
 
 // Main search function
-async function searchEvents(userId, query) {
+async function searchEvents(userId, query, preExtractedFilters = null) {
   const [filters, events] = await Promise.all([
-    extractFiltersWithGemini(userId, query),
+    preExtractedFilters || extractFiltersWithGemini(userId, query),
     fetchAllEvents()
   ]);
 
@@ -427,4 +439,5 @@ module.exports = {
   fetchAllEvents,
   searchEvents,
   formatEventResults,
+  extractFiltersWithGemini,
 };

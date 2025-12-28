@@ -1,4 +1,13 @@
 const { MongoClient } = require('mongodb');
+const path = require('path');
+
+// Load environment variables from .env.local or .env
+try {
+    require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+    require('dotenv').config();
+} catch (err) {
+    console.warn('⚠️  dotenv failed to load in rate_limiter.js:', err.message);
+}
 
 // Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;

@@ -4,6 +4,14 @@ const path = require('path');
 const axios = require('axios');
 const https = require('https');
 
+// Load environment variables from .env.local or .env
+try {
+  require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+  require('dotenv').config();
+} catch (err) {
+  console.warn('⚠️  dotenv failed to load in restaurants.js:', err.message);
+}
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const geminiClient = axios.create({
@@ -24,22 +32,16 @@ try {
 }
 
 
-// Validate required environment variables
-const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
-if (!MONGODB_URI) {
-  console.error(' MONGODB_URI or MONGO_URI environment variable is required');
-  process.exit(1);
-}
-
-// MongoDB connection (cached)
+// MongoDB connection (cached, lazy-loaded)
 let mongoClient = null;
 let restaurantsCollection = null;
 
 async function connectToMongoDB() {
   if (mongoClient && restaurantsCollection) return restaurantsCollection;
 
+  const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
   if (!MONGODB_URI) {
-    console.error('MongoDB URI not found in environment variables');
+    console.warn('⚠️  MONGODB_URI or MONGO_URI not set. Restaurant search will be unavailable.');
     return null;
   }
 
@@ -88,7 +90,7 @@ function extractRestaurantFilters(query) {
 
   // Use boroughs from JSON if available, otherwise fallback to hardcoded
   const boroughs = CUISINE_TYPES?.boroughs || {
-    Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'harlem', 'soho', 'tribeca'],
+    Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'harlem', 'soho', 'tribeca', 'manhatten'],
     Brooklyn: ['brooklyn', 'williamsburg', 'bushwick', 'dumbo'],
     Queens: ['queens', 'flushing', 'astoria', 'jackson heights'],
     Bronx: ['bronx'],
@@ -120,11 +122,11 @@ function extractRestaurantFilters(query) {
 }
 
 // Extract restaurant filters using Gemini AI
-async function extractRestaurantFiltersWithGemini(userId, query) {
+async function extractRestaurantFiltersWithGemini(userId, query, history = []) {
   const { checkAndIncrementGemini } = require('./rate_limiter');
 
-  if (!GEMINI_API_KEY) {
-    console.log('⚠️ GEMINI_API_KEY missing, falling back to heuristic extraction.');
+  if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
+    console.log('⚠️ GEMINI_API_KEY missing or empty, falling back to heuristic extraction.');
     return extractRestaurantFilters(query);
   }
 
@@ -139,10 +141,15 @@ async function extractRestaurantFiltersWithGemini(userId, query) {
   const availableBoroughs = Object.keys(CUISINE_TYPES?.boroughs || {}).join(', ');
   const availablePrices = (CUISINE_TYPES?.priceLevels || ['Inexpensive', 'Moderate', 'Expensive', 'Very Expensive']).join(', ');
 
-  const prompt = `Extract restaurant search filters from this query. 
+  const historyContext = history.length > 0 
+    ? `Recent conversation context:\n${history.map(m => `${m.role}: ${m.content}`).join('\n')}\n\n`
+    : '';
+
+  const prompt = `${historyContext}Extract restaurant search filters from this new query. 
 Query: "${query}"
 
 Guidelines:
+- If context is provided, combine it with the new query to extract all relevant filters.
 - cuisine: Choose the most relevant category from this list: [${availableCuisines}]. If none match, leave null.
 - borough: Choose from [${availableBoroughs}].
 - priceLevel: Choose from [${availablePrices}]. If they say "cheap", pick "Inexpensive". If "fancy", pick "Expensive".
@@ -152,13 +159,13 @@ Guidelines:
 Return ONLY a valid JSON object.`;
 
   try {
+    console.log('Calling Gemini API with key:', GEMINI_API_KEY ? `${GEMINI_API_KEY.substring(0, 10)}...` : 'MISSING');
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent',
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
-      },
-      { params: { key: GEMINI_API_KEY } }
+      }
     );
 
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
@@ -170,6 +177,10 @@ Return ONLY a valid JSON object.`;
     return filters;
   } catch (err) {
     console.error('Gemini restaurant filter extraction failed:', err.message);
+    if (err.response) {
+      console.error('   Status:', err.response.status);
+      console.error('   Response data:', JSON.stringify(err.response.data));
+    }
     return extractRestaurantFilters(query);
   }
 }
@@ -178,7 +189,17 @@ Return ONLY a valid JSON object.`;
 async function searchRestaurants(userId, query, preExtractedFilters = null) {
   const collection = await connectToMongoDB();
   if (!collection) {
-    return { query, filters: {}, results: [], count: 0 };
+    const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
+    if (!MONGODB_URI) {
+      return { 
+        query, 
+        filters: {}, 
+        results: [], 
+        count: 0, 
+        error: 'MongoDB not configured. Please set MONGODB_URI environment variable.' 
+      };
+    }
+    return { query, filters: {}, results: [], count: 0, error: 'Failed to connect to MongoDB.' };
   }
 
   const filters = preExtractedFilters || await extractRestaurantFiltersWithGemini(userId, query);
@@ -243,6 +264,10 @@ async function searchRestaurants(userId, query, preExtractedFilters = null) {
 
 // Format restaurant results for Instagram messages
 function formatRestaurantResults(searchResult) {
+  if (searchResult.error) {
+    return "I'm sorry, restaurant search is currently unavailable. Please try again later or ask about events instead!";
+  }
+  
   if (searchResult.count === 0) {
     return "I couldn't find any restaurants matching your search. Try a different cuisine or location!";
   }

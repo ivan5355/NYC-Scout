@@ -2,6 +2,14 @@ const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 
+// Load environment variables from .env.local or .env
+try {
+    require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+    require('dotenv').config();
+} catch (err) {
+    console.warn('⚠️  dotenv failed to load in extract_restaurant_filters.js:', err.message);
+}
+
 // Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 if (!MONGODB_URI) {
@@ -23,7 +31,7 @@ async function extractFiltersFromMongoDB() {
         console.log('📊 Extracting unique cuisines...');
         const cuisines = await collection.distinct('cuisineDescription');
 
-        console.log('📍 Extracting boroughs from addresses...');
+        console.log(' Extracting boroughs from addresses...');
         const addresses = await collection.distinct('fullAddress');
 
         // Extract boroughs from addresses
