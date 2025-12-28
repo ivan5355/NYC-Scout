@@ -26,20 +26,23 @@ async function classifyQuery(userId, text, history = []) {
 
     // Helper for heuristic classification
     const getHeuristicCategory = (t) => {
-        const restKeywords = [
-            'food', 'eat', 'restaurant', 'cuisine', 'dinner', 'lunch', 'breakfast', 'pizza', 'sushi', 'burger',
-            'ramen', 'pasta', 'taco', 'steak', 'cafe', 'bakery', 'hungry', 'dining', 'brunch', 'menu', 'delicious',
-            'italian', 'mexican', 'chinese', 'thai', 'japanese', 'korean', 'french', 'indian', 'seafood',
-            'manhattan', 'brooklyn', 'queens', 'bronx', 'staten island', 'manhatten'
-        ];
-        if (restKeywords.some(k => t.includes(k))) return 'RESTAURANT';
-
+        // Check event keywords FIRST (dates/times should lean towards events, not restaurants)
         const eventKeywords = [
             'event', 'concert', 'show', 'festival', 'park', 'doing', 'weekend', 'today', 'tonight', 'music',
             'comedy', 'theater', 'parade', 'market', 'exhibit', 'party', 'gig', 'performance', 'happen',
-            'things to do'
+            'things to do', 'tomorrow', 'this week', 'next week', 'saturday', 'sunday', 'friday',
+            'soccer', 'sports', 'game', 'match', 'basketball', 'baseball', 'football', 'hockey',
+            'brooklyn', 'manhattan', 'queens', 'bronx', 'staten island', 'brookyn', 'manhatten'
         ];
         if (eventKeywords.some(k => t.includes(k))) return 'EVENT';
+
+        // Then check restaurant keywords (food-specific)
+        const restKeywords = [
+            'food', 'eat', 'restaurant', 'cuisine', 'dinner', 'lunch', 'breakfast', 'pizza', 'sushi', 'burger',
+            'ramen', 'pasta', 'taco', 'steak', 'cafe', 'bakery', 'hungry', 'dining', 'brunch', 'menu', 'delicious',
+            'italian', 'mexican', 'chinese', 'thai', 'japanese', 'korean', 'french', 'indian', 'seafood'
+        ];
+        if (restKeywords.some(k => t.includes(k))) return 'RESTAURANT';
 
         return 'OTHER';
     };
@@ -78,7 +81,7 @@ Return ONLY one word: RESTAURANT, EVENT, or OTHER. No explanation.`;
         
         console.log('Calling Gemini API for classification with key:', GEMINI_API_KEY.substring(0, 10) + '...');
         const response = await geminiClient.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
             {
                 contents: [{ parts: [{ text: prompt }] }],
                 generationConfig: { maxOutputTokens: 10, temperature: 0.1 }

@@ -86,7 +86,7 @@ async function processQuery(userId, messageText) {
     let history = []; // History disabled for now
 
     try {
-        // history = await getHistory(userId); // Disabled
+        history = await getHistory(userId);
         category = await classifyQuery(userId, messageText, history);
         console.log(`Query classified as: ${category}`);
     } catch (err) {
@@ -107,6 +107,8 @@ async function processQuery(userId, messageText) {
             
             if (missing.length > 0) {
                 reply = `To find the best restaurants, I need to know the ${missing.join(' and ')}. Could you please provide those?`;
+                await saveToHistory(userId, messageText, 'user');
+                await saveToHistory(userId, reply, 'assistant');
                 return { reply, category };
             }
 
@@ -124,12 +126,15 @@ async function processQuery(userId, messageText) {
             const filters = await extractFiltersWithGemini(userId, messageText, history);
             
             const missing = [];
-            if (!filters.category && !filters.searchTerm) missing.push('what kind of events you are looking for');
-            if (!filters.date) missing.push('when (e.g., today, this weekend)');
-            if (!filters.borough) missing.push('which borough');
+            // Category, borough, and date are all mandatory
+            if (!filters.category && !filters.searchTerm) missing.push('event type (e.g., concert, festival, comedy)');
+            if (!filters.borough) missing.push('borough (e.g., Manhattan, Brooklyn)');
+            if (!filters.date) missing.push('when (e.g., today, this weekend, tomorrow)');
 
             if (missing.length > 0) {
-                reply = `I can help you find events! Could you let me know ${missing.join(' and ')}?`;
+                reply = `To find the best events, I need to know the ${missing.join(' and ')}. Could you please provide those?`;
+                await saveToHistory(userId, messageText, 'user');
+                await saveToHistory(userId, reply, 'assistant');
                 return { reply, category };
             }
 
@@ -155,7 +160,7 @@ async function processQuery(userId, messageText) {
             Keep it brief and helpful.`;
 
             const response = await geminiClient.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
                 { contents: [{ parts: [{ text: chatPrompt }] }] }
             );
             
@@ -166,6 +171,9 @@ async function processQuery(userId, messageText) {
         }
     }
     
+    // Final save for successful search or general query
+    await saveToHistory(userId, messageText, 'user');
+    await saveToHistory(userId, reply, 'assistant');
     return { reply, category };
 }
 

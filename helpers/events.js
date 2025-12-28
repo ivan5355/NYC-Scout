@@ -181,17 +181,27 @@ function applyFilters(events, filters) {
 }
 
 // Heuristic fallback for event extraction
-function extractEventFiltersHeuristic(query) {
+function extractEventFiltersHeuristic(query, history = []) {
   console.log('🔍 Executing extractEventFiltersHeuristic (Heuristic fallback)...');
-  const filters = {};
-  const lowerQuery = query.toLowerCase();
+  
+  // Combine query with recent history for better heuristic extraction
+  const combinedQuery = [
+    ...history.slice(-2).map(m => m.content),
+    query
+  ].join(' ').toLowerCase();
 
-  // Boroughs
+  const filters = {};
+
+  // Boroughs (with common typos)
   const boroughs = {
-    'manhattan': 'Manhattan', 'brooklyn': 'Brooklyn', 'queens': 'Queens', 'bronx': 'Bronx', 'staten island': 'Staten Island'
+    'manhattan': 'Manhattan', 'manhatten': 'Manhattan',
+    'brooklyn': 'Brooklyn', 'brookyn': 'Brooklyn',
+    'queens': 'Queens',
+    'bronx': 'Bronx',
+    'staten island': 'Staten Island'
   };
   for (const [key, val] of Object.entries(boroughs)) {
-    if (lowerQuery.includes(key)) {
+    if (combinedQuery.includes(key)) {
       filters.borough = val;
       break;
     }
@@ -214,7 +224,7 @@ function extractEventFiltersHeuristic(query) {
     categories = ['concert', 'festival', 'parade', 'show', 'theater', 'music', 'art', 'museum', 'sports', 'game', 'tour', 'walk', 'run', 'market'];
   }
   for (const cat of categories) {
-    if (lowerQuery.includes(cat.toLowerCase())) {
+    if (combinedQuery.includes(cat.toLowerCase())) {
       filters.category = cat;
       break;
     }
@@ -224,20 +234,20 @@ function extractEventFiltersHeuristic(query) {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
-  if (lowerQuery.includes('today')) {
+  if (combinedQuery.includes('today')) {
     filters.date = { type: 'specific', date: todayStr };
-  } else if (lowerQuery.includes('tomorrow')) {
+  } else if (combinedQuery.includes('tomorrow')) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     filters.date = { type: 'specific', date: tomorrow.toISOString().split('T')[0] };
-  } else if (lowerQuery.includes('weekend')) {
+  } else if (combinedQuery.includes('weekend')) {
     filters.searchTerm = (filters.searchTerm || '') + ' weekend';
   }
 
   // If no category found, treat remaining as search term
   if (!filters.category) {
     const stopWords = ['event', 'events', 'in', 'on', 'at', 'the', 'a', 'find', 'me', 'upcoming', 'today', 'tomorrow', 'weekend'];
-    const words = lowerQuery.split(/\s+/).filter(w => !stopWords.includes(w) && !Object.keys(boroughs).includes(w));
+    const words = combinedQuery.split(/\s+/).filter(w => !stopWords.includes(w) && !Object.keys(boroughs).includes(w));
     if (words.length > 0) {
       filters.searchTerm = words.join(' ');
     }
@@ -252,12 +262,12 @@ async function extractFiltersWithGemini(userId, query, history = []) {
 
   if (!GEMINI_API_KEY) {
     console.log('⚠️ GEMINI_API_KEY missing, returning empty filters.');
-    return extractEventFiltersHeuristic(query);
+    return extractEventFiltersHeuristic(query, history);
   }
 
   if (!await checkAndIncrementGemini(userId)) {
     console.log(`⚠️ User ${userId} exceeded Gemini limit in extractFiltersWithGemini. Using heuristic fallback.`);
-    return extractEventFiltersHeuristic(query);
+    return extractEventFiltersHeuristic(query, history);
   }
 
   console.log('Executing extractFiltersWithGemini...');
@@ -289,7 +299,9 @@ async function extractFiltersWithGemini(userId, query, history = []) {
 Query: "${query}"
 
 Guidelines:
-- If context is provided, combine it with the new query to extract all relevant filters.
+- IMPORTANT: If the new query mentions a SPECIFIC category, borough, or date, it should OVERRIDE any conflicting information in the recent conversation context.
+- Do not let old search preferences linger if the user is asking for something different now.
+- If the new query is just a borough (e.g., "Queens"), keep the category and date from the history.
 - date: object with "type" (specific/range/month) and relevant date fields
 - category: pick the best fit from [${categories.join(', ')}]
 - borough: one of " "Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"
@@ -299,7 +311,7 @@ Return ONLY valid JSON, no explanation.`;
 
   try {
     const response = await geminiClient.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
       { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 200, temperature: 0.1 } }
     );
 
@@ -347,7 +359,7 @@ Output Layout:
 - If no future events are found, say "I couldn't find any upcoming events matching your search."`;
 
     const response = await geminiClient.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],

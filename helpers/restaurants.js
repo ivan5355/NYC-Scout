@@ -73,16 +73,22 @@ function isRestaurantQuery(query) {
 }
 
 // Extract restaurant search filters from query (Heuristic Fallback)
-function extractRestaurantFilters(query) {
+function extractRestaurantFilters(query, history = []) {
   console.log('🔍 Executing extractRestaurantFilters (Heuristic fallback)...');
-  const queryLower = query.toLowerCase();
+  
+  // Combine query with recent history for better heuristic extraction
+  const combinedQuery = [
+    ...history.slice(-2).map(m => m.content),
+    query
+  ].join(' ').toLowerCase();
+
   const filters = {};
 
   // Use cuisines from JSON if available
   const cuisines = CUISINE_TYPES?.cuisines || {};
 
   for (const [cuisine, keywords] of Object.entries(cuisines)) {
-    if (keywords.some(k => queryLower.includes(k))) {
+    if (keywords.some(k => combinedQuery.includes(k))) {
       filters.cuisine = cuisine;
       break;
     }
@@ -91,30 +97,30 @@ function extractRestaurantFilters(query) {
   // Use boroughs from JSON if available, otherwise fallback to hardcoded
   const boroughs = CUISINE_TYPES?.boroughs || {
     Manhattan: ['manhattan', 'midtown', 'downtown', 'uptown', 'harlem', 'soho', 'tribeca', 'manhatten'],
-    Brooklyn: ['brooklyn', 'williamsburg', 'bushwick', 'dumbo'],
+    Brooklyn: ['brooklyn', 'williamsburg', 'bushwick', 'dumbo', 'brookyn'],
     Queens: ['queens', 'flushing', 'astoria', 'jackson heights'],
     Bronx: ['bronx'],
     'Staten Island': ['staten island']
   };
 
   for (const [borough, keywords] of Object.entries(boroughs)) {
-    if (keywords.some(k => queryLower.includes(k))) {
+    if (keywords.some(k => combinedQuery.includes(k))) {
       filters.borough = borough;
       break;
     }
   }
 
   // Price level detection (Standard mapping)
-  if (queryLower.includes('cheap') || queryLower.includes('budget') || queryLower.includes('affordable')) {
+  if (combinedQuery.includes('cheap') || combinedQuery.includes('budget') || combinedQuery.includes('affordable')) {
     filters.priceLevel = 'Inexpensive';
-  } else if (queryLower.includes('expensive') || queryLower.includes('fancy') || queryLower.includes('upscale')) {
+  } else if (combinedQuery.includes('expensive') || combinedQuery.includes('fancy') || combinedQuery.includes('upscale')) {
     filters.priceLevel = 'Expensive';
-  } else if (queryLower.includes('moderate') || queryLower.includes('reasonable')) {
+  } else if (combinedQuery.includes('moderate') || combinedQuery.includes('reasonable')) {
     filters.priceLevel = 'Moderate';
   }
 
   // Rating detection
-  if (queryLower.includes('best') || queryLower.includes('top') || queryLower.includes('highly rated')) {
+  if (combinedQuery.includes('best') || combinedQuery.includes('top') || combinedQuery.includes('highly rated')) {
     filters.minRating = 4;
   }
 
@@ -127,12 +133,12 @@ async function extractRestaurantFiltersWithGemini(userId, query, history = []) {
 
   if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
     console.log('⚠️ GEMINI_API_KEY missing or empty, falling back to heuristic extraction.');
-    return extractRestaurantFilters(query);
+    return extractRestaurantFilters(query, history);
   }
 
   if (!await checkAndIncrementGemini(userId)) {
     console.log(`⚠️ User ${userId} exceeded Gemini limit. Falling back to heuristic extraction.`);
-    return extractRestaurantFilters(query);
+    return extractRestaurantFilters(query, history);
   }
 
   console.log('Executing extractRestaurantFiltersWithGemini...');
@@ -149,7 +155,9 @@ async function extractRestaurantFiltersWithGemini(userId, query, history = []) {
 Query: "${query}"
 
 Guidelines:
-- If context is provided, combine it with the new query to extract all relevant filters.
+- IMPORTANT: If the new query mentions a SPECIFIC cuisine, borough, or search term, it should OVERRIDE any conflicting information in the recent conversation context.
+- Do not let old search preferences linger if the user is asking for something different now.
+- If the new query is just a borough (e.g., "Brooklyn"), use the cuisine mentioned in the history.
 - cuisine: Choose the most relevant category from this list: [${availableCuisines}]. If none match, leave null.
 - borough: Choose from [${availableBoroughs}].
 - priceLevel: Choose from [${availablePrices}]. If they say "cheap", pick "Inexpensive". If "fancy", pick "Expensive".
@@ -161,7 +169,7 @@ Return ONLY a valid JSON object.`;
   try {
     console.log('Calling Gemini API with key:', GEMINI_API_KEY ? `${GEMINI_API_KEY.substring(0, 10)}...` : 'MISSING');
     const response = await geminiClient.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { maxOutputTokens: 200, temperature: 0.1 }
@@ -181,7 +189,7 @@ Return ONLY a valid JSON object.`;
       console.error('   Status:', err.response.status);
       console.error('   Response data:', JSON.stringify(err.response.data));
     }
-    return extractRestaurantFilters(query);
+    return extractRestaurantFilters(query, history);
   }
 }
 
