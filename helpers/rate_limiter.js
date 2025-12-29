@@ -1,13 +1,4 @@
 const { MongoClient } = require('mongodb');
-const path = require('path');
-
-// Load environment variables from .env.local or .env
-try {
-    require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
-    require('dotenv').config();
-} catch (err) {
-    console.warn('⚠️  dotenv failed to load in rate_limiter.js:', err.message);
-}
 
 // Validate required environment variables
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -120,27 +111,7 @@ async function checkAndIncrementSearch(userId) {
     }
 }
 
-async function resetUserLimits(userId) {
-    const collection = await connectToMongoDB();
-    if (!collection) return false;
-
-    const today = new Date().toISOString().split('T')[0];
-    try {
-        await collection.updateOne(
-            { userId },
-            { $set: { date: today, gemini: 0, search: 0 } },
-            { upsert: true }
-        );
-        console.log(`User ${userId} rate limits reset to 0`);
-        return true;
-    } catch (err) {
-        console.error('Error resetting user limits:', err);
-        return false;
-    }
-}
-
 module.exports = {
     checkAndIncrementGemini,
-    checkAndIncrementSearch,
-    resetUserLimits
+    checkAndIncrementSearch
 };

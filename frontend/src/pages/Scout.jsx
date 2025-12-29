@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
 export default function Scout() {
-  // Persist userId in localStorage so conversation context works across refreshes
   const [userId] = useState(() => {
     const stored = localStorage.getItem('nyc_scout_user_id');
     if (stored) return stored;
@@ -12,44 +11,78 @@ export default function Scout() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [currentButtons, setCurrentButtons] = useState(null);
+  const [initialized, setInitialized] = useState(false);
   
   const messagesEndRef = useRef(null);
-  
   const API_URL = '/api/chat';
 
   useEffect(() => {
-    setMessages([{
-      type: 'assistant',
-      content: "Hey! I'm NYC Scout. Ask me about restaurants or events in NYC.\n\nTry: \"Best ramen in East Village\" or \"Comedy shows this weekend\""
-    }]);
-  }, []);
+    if (initialized) return;
+    setInitialized(true);
+    initChat();
+  }, [initialized]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
-    
-    const userMessage = input.trim();
-    setInput('');
+  const initChat = async () => {
     setIsLoading(true);
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'hi', userId })
+      });
+      
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      
+      setMessages([{
+        type: 'assistant',
+        content: data.reply,
+        category: data.category
+      }]);
+      
+      if (data.buttons) {
+        setCurrentButtons(data.buttons);
+      }
+    } catch (err) {
+      console.error('Init error:', err);
+      setMessages([{
+        type: 'assistant',
+        content: 'Something went wrong. Make sure the backend is running.'
+      }]);
+    }
+    setIsLoading(false);
+  };
+
+  const sendMessage = async (text, payload = null) => {
+    if (!text && !payload) return;
     
-    setMessages(prev => [...prev, { type: 'user', content: userMessage }]);
+    setIsLoading(true);
+    setCurrentButtons(null);
+    
+    if (text) {
+      setMessages(prev => [...prev, { type: 'user', content: text }]);
+    }
+    if (payload) {
+      const btn = currentButtons?.find(b => b.payload === payload);
+      if (btn) {
+        setMessages(prev => [...prev, { type: 'user', content: btn.title }]);
+      }
+    }
     
     try {
       const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, userId })
+        body: JSON.stringify({ message: text, userId, payload })
       });
       
       const data = await res.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
+      if (data.error) throw new Error(data.error);
       
       setMessages(prev => [...prev, {
         type: 'assistant',
@@ -57,23 +90,37 @@ export default function Scout() {
         category: data.category
       }]);
       
+      if (data.buttons) {
+        setCurrentButtons(data.buttons);
+      }
+      
     } catch (err) {
       console.error('Chat error:', err);
       setMessages(prev => [...prev, {
         type: 'assistant',
-        content: 'Something went wrong. Make sure the backend is running on port 3000.'
+        content: 'Something went wrong. Make sure the backend is running.'
       }]);
     }
     
     setIsLoading(false);
   };
 
-  const quickPrompts = [
-    "Best pizza in Brooklyn",
-    "Rooftop bars in Manhattan",
-    "Live music tonight",
-    "Comedy shows this weekend"
-  ];
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+    sendMessage(input.trim());
+    setInput('');
+  };
+
+  const handleButtonClick = (payload) => {
+    if (isLoading) return;
+    sendMessage(null, payload);
+  };
+
+  const resetUser = () => {
+    localStorage.removeItem('nyc_scout_user_id');
+    window.location.reload();
+  };
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -89,32 +136,18 @@ export default function Scout() {
               <p className="text-xs text-white/50">Food & events guide</p>
             </div>
           </div>
-          <div className="text-xs text-white/40 border border-white/20 px-3 py-1 rounded">
-            Test Mode
-          </div>
+          <button 
+            onClick={resetUser}
+            className="text-xs text-white/40 border border-white/20 px-3 py-1 rounded hover:bg-white/10"
+          >
+            Reset User
+          </button>
         </div>
       </header>
 
-      {/* Main Chat Area */}
-      <main className="max-w-4xl mx-auto px-4 py-6 pb-32">
-        {/* Quick Prompts */}
-        {messages.length <= 1 && (
-          <div className="mb-8">
-            <p className="text-sm text-white/50 mb-3">Try asking:</p>
-            <div className="flex flex-wrap gap-2">
-              {quickPrompts.map((prompt, i) => (
-                <button
-                  key={i}
-                  onClick={() => setInput(prompt)}
-                  className="px-3 py-2 bg-black hover:bg-white/10 rounded border border-white/20 text-sm transition"
-                >
-                  {prompt}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
 
+      {/* Main Chat Area */}
+      <main className="max-w-4xl mx-auto px-4 py-6 pb-40">
         {/* Messages */}
         <div className="space-y-4">
           {messages.map((msg, i) => (
@@ -129,11 +162,6 @@ export default function Scout() {
                     : 'bg-white/10 text-white'
                 }`}
               >
-                {msg.category && (
-                  <span className="inline-block text-xs border border-white/30 px-2 py-0.5 rounded mb-2">
-                    {msg.category}
-                  </span>
-                )}
                 <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
               </div>
             </div>
@@ -154,6 +182,26 @@ export default function Scout() {
           <div ref={messagesEndRef} />
         </div>
       </main>
+
+      {/* Quick Reply Buttons */}
+      {currentButtons && currentButtons.length > 0 && (
+        <div className="fixed bottom-20 left-0 right-0 bg-black/90 border-t border-white/10 px-4 py-3">
+          <div className="max-w-4xl mx-auto">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {currentButtons.map((btn, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleButtonClick(btn.payload)}
+                  disabled={isLoading}
+                  className="px-3 py-2 bg-black border border-white/30 rounded-full text-sm hover:bg-white/10 transition disabled:opacity-50"
+                >
+                  {btn.title}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Input Area */}
       <div className="fixed bottom-0 left-0 right-0 bg-black border-t border-white/10">

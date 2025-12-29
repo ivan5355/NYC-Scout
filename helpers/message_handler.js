@@ -1,237 +1,570 @@
-const path = require('path');
-
-// Load environment variables from .env.local or .env (must be first!)
-try {
-  require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
-  require('dotenv').config(); // Also load .env if .env.local doesn't exist
-} catch (err) {
-  console.warn('⚠️  dotenv failed to load in message_handler.js:', err.message);
-}
-
 const { classifyQuery } = require('./query_router');
+const { searchRestaurants, formatRestaurantResults, createDedupeKey } = require('./restaurants');
+const { searchEvents, formatEventResults } = require('./events');
+const { FOOD_ONBOARDING } = require('./food_onboarding');
 const { 
-    searchRestaurants, 
-    formatRestaurantResults, 
-    extractRestaurantFiltersWithGemini 
-} = require('./restaurants');
-const { 
-    searchEvents, 
-    formatEventResults, 
-    extractFiltersWithGemini 
-} = require('./events');
+  getOrCreateProfile, 
+  updateProfile, 
+  deleteProfile, 
+  getProfile,
+  profileExists,
+  updateContext,
+  addShownRestaurants,
+  addShownEvents,
+  clearContext,
+  resetOnboarding,
+  getContext
+} = require('./user_profile');
 const axios = require('axios');
 const https = require('https');
-const { MongoClient } = require('mongodb');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
-
-let mongoClient = null;
-let historyCollection = null;
-
-async function connectToMongoDB() {
-    if (historyCollection) return historyCollection;
-    if (!MONGODB_URI) return null;
-    try {
-        mongoClient = new MongoClient(MONGODB_URI);
-        await mongoClient.connect();
-        const db = mongoClient.db('nyc-events');
-        historyCollection = db.collection('conversation_history');
-        return historyCollection;
-    } catch (err) {
-        console.error('Failed to connect to MongoDB for history:', err.message);
-        return null;
-    }
-}
-
-async function getHistory(userId) {
-    const col = await connectToMongoDB();
-    if (!col) return [];
-    const record = await col.findOne({ userId });
-    return record?.messages || [];
-}
-
-async function saveToHistory(userId, message, role = 'user') {
-    const col = await connectToMongoDB();
-    if (!col) return;
-    const history = await getHistory(userId);
-    const updatedHistory = [...history, { role, content: message }].slice(-10); // Keep last 10
-    await col.updateOne(
-        { userId },
-        { $set: { messages: updatedHistory, updatedAt: new Date() } },
-        { upsert: true }
-    );
-}
-
-const geminiClient = axios.create({
-    timeout: 30000,
-    httpsAgent: new https.Agent({ keepAlive: true }),
-});
 
 const graphClient = axios.create({
-    timeout: 15000,
-    httpsAgent: new https.Agent({ keepAlive: true }),
+  timeout: 15000,
+  httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
 /* =====================
-   SHARED QUERY PROCESSOR
-   Used by both Instagram DMs and Web Chat
+   HELPERS
 ===================== */
-async function processQuery(userId, messageText) {
-    console.log(`Processing query from ${userId}: ${messageText}`);
-
-    let reply = null;
-    let category = null;
-    let history = []; // History disabled for now
-
-    try {
-        history = await getHistory(userId);
-        category = await classifyQuery(userId, messageText, history);
-        console.log(`Query classified as: ${category}`);
-    } catch (err) {
-        console.error('Classification failed:', err.message);
-        category = 'OTHER';
-    }
-
-    // 1) Restaurants
-    if (category === 'RESTAURANT') {
-        try {
-            console.log('Processing as restaurant query...');
-            const filters = await extractRestaurantFiltersWithGemini(userId, messageText, history);
-            
-            const missing = [];
-            // Borough and Cuisine are strictly mandatory (searchTerm is NOT a substitute)
-            if (!filters.cuisine) missing.push('cuisine (e.g., Italian, Pizza, Chinese)');
-            if (!filters.borough) missing.push('borough (e.g., Manhattan, Brooklyn)');
-            
-            if (missing.length > 0) {
-                reply = `To find the best restaurants, I need to know the ${missing.join(' and ')}. Could you please provide those?`;
-                await saveToHistory(userId, messageText, 'user');
-                await saveToHistory(userId, reply, 'assistant');
-                return { reply, category };
-            }
-
-            const searchResult = await searchRestaurants(userId, messageText, filters);
-            reply = formatRestaurantResults(searchResult);
-        } catch (err) {
-            console.error('Restaurant search failed:', err.message);
-            reply = "I'm sorry, I'm having trouble searching for restaurants right now. Please try again in a moment!";
-        }
-    }
-    // 2) Events
-    else if (category === 'EVENT') {
-        try {
-            console.log('Processing as event query...');
-            const filters = await extractFiltersWithGemini(userId, messageText, history);
-            
-            const missing = [];
-            // Category, borough, and date are all mandatory
-            if (!filters.category && !filters.searchTerm) missing.push('event type (e.g., concert, festival, comedy)');
-            if (!filters.borough) missing.push('borough (e.g., Manhattan, Brooklyn)');
-            if (!filters.date) missing.push('when (e.g., today, this weekend, tomorrow)');
-
-            if (missing.length > 0) {
-                reply = `To find the best events, I need to know the ${missing.join(' and ')}. Could you please provide those?`;
-                await saveToHistory(userId, messageText, 'user');
-                await saveToHistory(userId, reply, 'assistant');
-                return { reply, category };
-            }
-
-            const searchResult = await searchEvents(userId, messageText, filters);
-            reply = formatEventResults(searchResult);
-        } catch (err) {
-            console.error('Event search failed:', err.message);
-            reply = "I'm sorry, I'm having trouble searching for events right now. Please try again in a moment!";
-        }
-    }
-    // 3) Everything else (category === 'OTHER')
-    else {
-        console.log('Processing as general query...');
-        try {
-            const chatPrompt = `You are NYC Scout, a friendly local guide for New York City. 
-            The user said: "${messageText}"
-            
-            Recent history for context:
-            ${history.map(m => `${m.role}: ${m.content}`).join('\n')}
-
-            If they are greeting you, greet them back warmly and explain you can help them find the best restaurants and events in NYC.
-            If they are asking a general question not related to NYC food or events, politely steer them back to what you do best (NYC recommendations).
-            Keep it brief and helpful.`;
-
-            const response = await geminiClient.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
-                { contents: [{ parts: [{ text: chatPrompt }] }] }
-            );
-            
-            reply = response.data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm NYC Scout! I can help you find restaurants and events in NYC. What are you looking for?";
-        } catch (err) {
-            console.error('General chat failed:', err.message);
-            reply = "Hi! I'm NYC Scout. I can help you find the best restaurants and events in NYC. Feel free to ask about food or things to do!";
-        }
-    }
-    
-    // Final save for successful search or general query
-    await saveToHistory(userId, messageText, 'user');
-    await saveToHistory(userId, reply, 'assistant');
-    return { reply, category };
+function getSenderId(body) {
+  const entry = body?.entry?.[0];
+  const msg = entry?.messaging?.[0];
+  return msg?.sender?.id ? String(msg.sender.id) : null;
 }
 
+function getIncomingTextOrPayload(body) {
+  const entry = body?.entry?.[0];
+  const msg = entry?.messaging?.[0];
+  return {
+    text: msg?.message?.text?.trim() || null,
+    payload: msg?.message?.quick_reply?.payload || msg?.postback?.payload || null
+  };
+}
+
+function isFollowUpQuery(text) {
+  if (!text) return false;
+  const t = text.toLowerCase().trim();
+  const patterns = ['more', 'show me more', 'other than these', 'different ones', 'another', 'next', 'other', 'else', 'besides'];
+  return patterns.some(p => t.includes(p)) && t.split(' ').length <= 6;
+}
+
+// Parse borough from various payload formats
+function parseBoroughFromPayload(payload) {
+  const boroughMap = {
+    'BOROUGH_MANHATTAN': 'Manhattan',
+    'BOROUGH_BROOKLYN': 'Brooklyn',
+    'BOROUGH_QUEENS': 'Queens',
+    'BOROUGH_BRONX': 'Bronx',
+    'BOROUGH_STATEN': 'Staten Island',
+    'BOROUGH_ANY': null,
+    'CONSTRAINT_BOROUGH_MANHATTAN': 'Manhattan',
+    'CONSTRAINT_BOROUGH_BROOKLYN': 'Brooklyn',
+    'CONSTRAINT_BOROUGH_QUEENS': 'Queens',
+    'CONSTRAINT_BOROUGH_BRONX': 'Bronx',
+    'CONSTRAINT_BOROUGH_STATEN': 'Staten Island',
+    'CONSTRAINT_BOROUGH_ANYWHERE': null
+  };
+  return boroughMap[payload];
+}
+
+// Parse budget from payload
+function parseBudgetFromPayload(payload) {
+  const budgetMap = {
+    'BUDGET_$': '$',
+    'BUDGET_$$': '$$',
+    'BUDGET_$$$': '$$$',
+    'BUDGET_ANY': null
+  };
+  return budgetMap[payload];
+}
+
+
 /* =====================
-   WEBHOOK DM ENTRYPOINT
+   WEBHOOK ENTRYPOINT
 ===================== */
 async function handleDM(body) {
-    const entry = body?.entry?.[0];
-    const messaging = entry?.messaging?.[0];
+  const messaging = body?.entry?.[0]?.messaging?.[0];
+  if (!messaging || messaging.message?.is_echo) return;
 
-    if (!messaging || messaging.message?.is_echo) {
-        return;
+  const senderId = getSenderId(body);
+  if (!senderId) return;
+
+  const incoming = getIncomingTextOrPayload(body);
+  if (!incoming.text && !incoming.payload) return;
+
+  // Handle special commands BEFORE creating profile
+  if (incoming.text) {
+    const lowerText = incoming.text.toLowerCase().trim();
+    
+    if (lowerText === 'delete my data') {
+      if (await profileExists(senderId)) {
+        await deleteProfile(senderId);
+        await sendMessage(senderId, "Done — I deleted your data.");
+      } else {
+        await sendMessage(senderId, "No data found for your account.");
+      }
+      return;
     }
+    
+    if (lowerText === 'reset') {
+      await resetOnboarding(senderId);
+      await sendMessage(senderId, "Reset complete!");
+      await sendMessage(senderId, FOOD_ONBOARDING.START.text, FOOD_ONBOARDING.START.replies);
+      return;
+    }
+  }
 
-    const senderId = messaging.sender?.id;
-    const text = messaging.message?.text;
+  const profile = await getOrCreateProfile(senderId);
+  const context = await getContext(senderId);
 
-    if (!senderId || !text) return;
+  // Handle pending constraint gate
+  if (context?.pendingType && incoming.payload) {
+    const handled = await handleConstraintResponse(senderId, incoming.payload, profile, context);
+    if (handled) return;
+  }
 
-    await processDM(senderId, text);
+  // Run onboarding if not completed
+  if (!profile.onboarding.completed) {
+    const result = await handleFoodOnboarding({ senderId, incoming, send: sendMessage, profile });
+    if (result.handled) return;
+  }
+
+  await processDM(senderId, incoming.text, incoming.payload, profile, context);
 }
 
 /* =====================
-   DM PROCESSING (Instagram)
+   CONSTRAINT GATE HANDLER
 ===================== */
-async function processDM(senderId, messageText) {
-    const { reply } = await processQuery(senderId, messageText);
-    await sendInstagramMessage(senderId, reply);
+async function handleConstraintResponse(senderId, payload, profile, context) {
+  console.log(`Handling constraint response: ${payload}`);
+  
+  const pendingFilters = context?.pendingFilters ? { ...context.pendingFilters } : {};
+  const pendingQuery = context?.pendingQuery || '';
+  const pendingType = context?.pendingType;
+  
+  if (!pendingType) return false;
+  
+  // Handle borough payloads (both formats)
+  if ((payload.startsWith('BOROUGH_') || payload.startsWith('CONSTRAINT_BOROUGH_')) && pendingType === 'restaurant_gate') {
+    const borough = parseBoroughFromPayload(payload);
+    if (borough !== undefined) {
+      pendingFilters.borough = borough;
+    }
+    return await runRestaurantSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
+  }
+  
+  // Handle budget payloads
+  if (payload.startsWith('BUDGET_') && pendingType === 'restaurant_gate') {
+    const budget = parseBudgetFromPayload(payload);
+    if (budget !== undefined) {
+      pendingFilters.budget = budget;
+    }
+    return await runRestaurantSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
+  }
+  
+  // Handle event price payloads
+  if (payload.startsWith('EVENT_') && pendingType === 'event_gate') {
+    const priceMap = { 'EVENT_FREE': 'free', 'EVENT_BUDGET': 'budget', 'EVENT_ANY_PRICE': null };
+    pendingFilters.priceFilter = priceMap[payload];
+    
+    await updateContext(senderId, {
+      pendingType: null,
+      pendingQuery: null,
+      pendingFilters: null,
+      lastFilters: pendingFilters,
+      lastCategory: 'EVENT'
+    });
+    
+    const searchResult = await searchEvents(senderId, pendingQuery || 'events', { ...context, lastFilters: pendingFilters });
+    const formatted = formatEventResults(searchResult);
+    await sendMessage(senderId, formatted.text, formatted.replies || null);
+    
+    const shownIds = searchResult.results.map(e => e.event_id).filter(Boolean);
+    if (shownIds.length > 0) {
+      await addShownEvents(senderId, shownIds);
+    }
+    return true;
+  }
+  
+  return false;
+}
+
+async function runRestaurantSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context) {
+  await updateContext(senderId, {
+    pendingType: null,
+    pendingQuery: null,
+    pendingFilters: null,
+    lastFilters: pendingFilters,
+    lastCategory: 'RESTAURANT'
+  });
+  
+  const searchResult = await searchRestaurants(
+    senderId,
+    pendingQuery || 'restaurant',
+    pendingFilters,
+    profile?.foodProfile,
+    context,
+    true
+  );
+  
+  const formatted = formatRestaurantResults(searchResult);
+  await sendMessage(senderId, formatted.text, formatted.replies || null);
+  
+  // Track shown restaurants by dedupeKey AND name
+  const shownKeys = searchResult.results.map(r => r.dedupeKey).filter(Boolean);
+  const shownNames = searchResult.results.map(r => r.name || r.dbData?.Name).filter(Boolean);
+  if (shownKeys.length > 0) {
+    await addShownRestaurants(senderId, shownKeys, shownNames);
+  }
+  
+  return true;
+}
+
+
+/* =====================
+   FOOD ONBOARDING
+===================== */
+async function handleFoodOnboarding({ senderId, incoming, send, profile }) {
+  if (profile.onboarding.completed) {
+    return { handled: false, profile };
+  }
+
+  const step = profile.onboarding.step;
+
+  if (step === 0) {
+    if (incoming.payload === 'FOOD_ONBOARD_START') {
+      await updateProfile(senderId, { 'onboarding.step': 1, 'onboarding.startedAt': new Date() });
+      await send(senderId, FOOD_ONBOARDING.Q1.text, FOOD_ONBOARDING.Q1.replies);
+      return { handled: true, profile };
+    }
+
+    if (incoming.payload === 'FOOD_ONBOARD_SKIP') {
+      await updateProfile(senderId, { 'onboarding.completed': true, 'onboarding.completedAt': new Date() });
+      await send(senderId, FOOD_ONBOARDING.DONE.text);
+      return { handled: true, profile };
+    }
+
+    await send(senderId, FOOD_ONBOARDING.START.text, FOOD_ONBOARDING.START.replies);
+    return { handled: true, profile };
+  }
+
+  if (step >= 1 && step <= 4) {
+    if (!incoming.payload) {
+      const cfg = [null, FOOD_ONBOARDING.Q1, FOOD_ONBOARDING.Q2, FOOD_ONBOARDING.Q3, FOOD_ONBOARDING.Q4][step];
+      await send(senderId, cfg.text, cfg.replies);
+      return { handled: true, profile };
+    }
+
+    const updates = { 'onboarding.step': step + 1 };
+
+    if (step === 1) {
+      const map = { DIET_VEGETARIAN: "Vegetarian", DIET_VEGAN: "Vegan", DIET_HALAL: "Halal", DIET_KOSHER: "Kosher", DIET_NOPORK: "No pork", DIET_GLU_FREE: "Gluten-free", DIET_NUT: "Nut allergy", DIET_NONE: null };
+      updates['foodProfile.dietary'] = map[incoming.payload] ? [map[incoming.payload]] : [];
+    }
+    if (step === 2) {
+      const map = { "BUDGET_$": "$", "BUDGET_$$": "$$", "BUDGET_$$$": "$$$", "BUDGET_ANY": null };
+      updates['foodProfile.budget'] = map[incoming.payload] || null;
+    }
+    if (step === 3) {
+      const map = { BOROUGH_MANHATTAN: "Manhattan", BOROUGH_BROOKLYN: "Brooklyn", BOROUGH_QUEENS: "Queens", BOROUGH_BRONX: "Bronx", BOROUGH_STATEN: "Staten Island", BOROUGH_ANY: null };
+      updates['foodProfile.borough'] = map[incoming.payload] || null;
+    }
+    if (step === 4) {
+      const map = { CRAVE_ASIAN: "Asian", CRAVE_ITALIAN: "Italian", CRAVE_MEXICAN: "Mexican", CRAVE_AMERICAN: "American", CRAVE_MIDEAST: "Middle Eastern", CRAVE_INDIAN: "Indian", CRAVE_CAFE: "Cafe" };
+      updates['foodProfile.craving'] = map[incoming.payload] || null;
+    }
+
+    await updateProfile(senderId, updates);
+
+    const nextQ = [null, null, FOOD_ONBOARDING.Q2, FOOD_ONBOARDING.Q3, FOOD_ONBOARDING.Q4, FOOD_ONBOARDING.Q5][step + 1];
+    if (nextQ) await send(senderId, nextQ.text, nextQ.replies);
+
+    return { handled: true, profile };
+  }
+
+  if (step === 5) {
+    const t = (incoming.text || "").trim();
+    const updates = { 'onboarding.completed': true, 'onboarding.completedAt': new Date() };
+    updates['foodProfile.favSpots'] = (t && t.toLowerCase() !== 'skip') 
+      ? t.split(",").map(s => s.trim()).filter(Boolean).slice(0, 2) 
+      : [];
+
+    await updateProfile(senderId, updates);
+    await send(senderId, FOOD_ONBOARDING.DONE.text);
+    return { handled: true, profile };
+  }
+
+  return { handled: false, profile };
+}
+
+
+/* =====================
+   MAIN DM PROCESSING
+===================== */
+async function processDM(senderId, messageText, payload, profile, context) {
+  console.log(`Processing: ${messageText || payload}`);
+
+  const isFollowUp = isFollowUpQuery(messageText);
+  
+  let category;
+  if (isFollowUp && context?.lastCategory) {
+    category = context.lastCategory;
+  } else {
+    category = await classifyQuery(senderId, messageText);
+  }
+
+  if (category === 'RESTAURANT') {
+    const searchResult = await searchRestaurants(
+      senderId,
+      messageText,
+      null,
+      profile?.foodProfile,
+      context
+    );
+
+    if (searchResult.needsConstraints) {
+      const formatted = formatRestaurantResults(searchResult);
+      
+      await updateContext(senderId, {
+        pendingType: 'restaurant_gate',
+        pendingQuery: messageText,
+        pendingFilters: searchResult.pendingFilters || searchResult.filters,
+        lastCategory: category
+      });
+      
+      await sendMessage(senderId, formatted.text, formatted.replies);
+      return;
+    }
+
+    const formatted = formatRestaurantResults(searchResult);
+    await sendMessage(senderId, formatted.text, formatted.replies || null);
+
+    const shownKeys = searchResult.results.map(r => r.dedupeKey).filter(Boolean);
+    const shownNames = searchResult.results.map(r => r.name || r.dbData?.Name).filter(Boolean);
+    if (shownKeys.length > 0) await addShownRestaurants(senderId, shownKeys, shownNames);
+
+    await updateContext(senderId, {
+      lastCategory: category,
+      lastFilters: searchResult.filters,
+      pendingType: null,
+      pendingQuery: null,
+      pendingFilters: null
+    });
+    return;
+  }
+
+  if (category === 'EVENT') {
+    const searchResult = await searchEvents(senderId, messageText, context);
+
+    if (searchResult.needsConstraints) {
+      const formatted = formatEventResults(searchResult);
+      await updateContext(senderId, {
+        pendingType: 'event_gate',
+        pendingQuery: messageText,
+        pendingFilters: searchResult.filters,
+        lastCategory: category
+      });
+      await sendMessage(senderId, formatted.text, formatted.replies);
+      return;
+    }
+
+    const formatted = formatEventResults(searchResult);
+    await sendMessage(senderId, formatted.text);
+
+    const shownIds = searchResult.results.map(e => e.event_id).filter(Boolean);
+    if (shownIds.length > 0) await addShownEvents(senderId, shownIds);
+
+    await updateContext(senderId, {
+      lastCategory: category,
+      lastFilters: searchResult.filters,
+      pendingType: null
+    });
+    return;
+  }
+
+  await sendMessage(senderId, "I'm food-only right now—tell me what you're craving!");
+}
+
+
+/* =====================
+   TEST-FRIENDLY VERSION
+===================== */
+async function processDMForTest(senderId, messageText, payload = null) {
+  console.log(`[TEST] ${senderId}: ${messageText || payload}`);
+
+  if (messageText) {
+    const lowerText = messageText.toLowerCase().trim();
+    
+    if (lowerText === 'delete my data') {
+      if (await profileExists(senderId)) {
+        await deleteProfile(senderId);
+        return { reply: "Done — I deleted your data.", category: "SYSTEM" };
+      }
+      return { reply: "No data found.", category: "SYSTEM" };
+    }
+    
+    if (lowerText === 'reset') {
+      await resetOnboarding(senderId);
+      return { 
+        reply: "Reset complete!\n\n" + FOOD_ONBOARDING.START.text,
+        buttons: FOOD_ONBOARDING.START.replies,
+        category: "SYSTEM"
+      };
+    }
+  }
+
+  const profile = await getOrCreateProfile(senderId);
+  const context = await getContext(senderId);
+  const incoming = { text: messageText, payload };
+
+  // Handle pending constraint gate
+  if (context?.pendingType && payload) {
+    const pendingFilters = { ...(context.pendingFilters || {}) };
+    const pendingQuery = context.pendingQuery || '';
+    
+    // Borough constraint (both formats)
+    if ((payload.startsWith('BOROUGH_') || payload.startsWith('CONSTRAINT_BOROUGH_')) && context.pendingType === 'restaurant_gate') {
+      const borough = parseBoroughFromPayload(payload);
+      if (borough !== undefined) pendingFilters.borough = borough;
+      
+      await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null, lastFilters: pendingFilters, lastCategory: 'RESTAURANT' });
+      
+      const searchResult = await searchRestaurants(senderId, pendingQuery || 'restaurant', pendingFilters, profile?.foodProfile, context, true);
+      const formatted = formatRestaurantResults(searchResult);
+      
+      const shownKeys = searchResult.results.map(r => r.dedupeKey).filter(Boolean);
+      const shownNames = searchResult.results.map(r => r.name || r.dbData?.Name).filter(Boolean);
+      if (shownKeys.length > 0) await addShownRestaurants(senderId, shownKeys, shownNames);
+      
+      return { reply: formatted.text, buttons: formatted.replies, category: 'RESTAURANT' };
+    }
+    
+    // Budget constraint
+    if (payload.startsWith('BUDGET_') && context.pendingType === 'restaurant_gate') {
+      const budget = parseBudgetFromPayload(payload);
+      if (budget !== undefined) pendingFilters.budget = budget;
+      
+      await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null, lastFilters: pendingFilters, lastCategory: 'RESTAURANT' });
+      
+      const searchResult = await searchRestaurants(senderId, pendingQuery || 'restaurant', pendingFilters, profile?.foodProfile, context, true);
+      const formatted = formatRestaurantResults(searchResult);
+      
+      const shownKeys = searchResult.results.map(r => r.dedupeKey).filter(Boolean);
+      const shownNames = searchResult.results.map(r => r.name || r.dbData?.Name).filter(Boolean);
+      if (shownKeys.length > 0) await addShownRestaurants(senderId, shownKeys, shownNames);
+      
+      return { reply: formatted.text, buttons: formatted.replies, category: 'RESTAURANT' };
+    }
+    
+    // Event price constraint
+    if (payload.startsWith('EVENT_') && context.pendingType === 'event_gate') {
+      const priceMap = { 'EVENT_FREE': 'free', 'EVENT_BUDGET': 'budget', 'EVENT_ANY_PRICE': null };
+      pendingFilters.priceFilter = priceMap[payload];
+      
+      await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null, lastFilters: pendingFilters, lastCategory: 'EVENT' });
+      
+      const searchResult = await searchEvents(senderId, pendingQuery || 'events', { ...context, lastFilters: pendingFilters });
+      const formatted = formatEventResults(searchResult);
+      
+      const shownIds = searchResult.results.map(e => e.event_id).filter(Boolean);
+      if (shownIds.length > 0) await addShownEvents(senderId, shownIds);
+      
+      return { reply: formatted.text, buttons: formatted.replies, category: 'EVENT' };
+    }
+  }
+
+  // Handle onboarding
+  if (!profile.onboarding.completed) {
+    const result = await handleFoodOnboarding({ senderId, incoming, send: async () => {}, profile });
+    if (result.handled) {
+      const updatedProfile = await getProfile(senderId);
+      if (updatedProfile?.onboarding.completed) {
+        return { reply: FOOD_ONBOARDING.DONE.text, category: "ONBOARDING" };
+      }
+      const step = updatedProfile?.onboarding.step || 0;
+      const questions = [FOOD_ONBOARDING.START, FOOD_ONBOARDING.Q1, FOOD_ONBOARDING.Q2, FOOD_ONBOARDING.Q3, FOOD_ONBOARDING.Q4, FOOD_ONBOARDING.Q5];
+      const q = questions[step] || FOOD_ONBOARDING.START;
+      return { reply: q.text, buttons: q.replies, category: "ONBOARDING" };
+    }
+  }
+
+  // Normal flow
+  const isFollowUp = isFollowUpQuery(messageText);
+  let category = (isFollowUp && context?.lastCategory) ? context.lastCategory : await classifyQuery(senderId, messageText);
+
+  if (category === 'RESTAURANT') {
+    const searchResult = await searchRestaurants(senderId, messageText, null, profile?.foodProfile, context);
+
+    if (searchResult.needsConstraints) {
+      await updateContext(senderId, { pendingType: 'restaurant_gate', pendingQuery: messageText, pendingFilters: searchResult.pendingFilters || searchResult.filters, lastCategory: category });
+      const formatted = formatRestaurantResults(searchResult);
+      return { reply: formatted.text, buttons: formatted.replies, category };
+    }
+
+    const formatted = formatRestaurantResults(searchResult);
+    const shownKeys = searchResult.results.map(r => r.dedupeKey).filter(Boolean);
+    const shownNames = searchResult.results.map(r => r.name || r.dbData?.Name).filter(Boolean);
+    if (shownKeys.length > 0) await addShownRestaurants(senderId, shownKeys, shownNames);
+    await updateContext(senderId, { lastCategory: category, lastFilters: searchResult.filters, pendingType: null });
+    
+    return { reply: formatted.text, category };
+  }
+
+  if (category === 'EVENT') {
+    const searchResult = await searchEvents(senderId, messageText, context);
+
+    if (searchResult.needsConstraints) {
+      await updateContext(senderId, { pendingType: 'event_gate', pendingQuery: messageText, pendingFilters: searchResult.filters, lastCategory: category });
+      const formatted = formatEventResults(searchResult);
+      return { reply: formatted.text, buttons: formatted.replies, category };
+    }
+
+    const formatted = formatEventResults(searchResult);
+    const shownIds = searchResult.results.map(e => e.event_id).filter(Boolean);
+    if (shownIds.length > 0) await addShownEvents(senderId, shownIds);
+    await updateContext(senderId, { lastCategory: category, lastFilters: searchResult.filters, pendingType: null });
+    
+    return { reply: formatted.text, category };
+  }
+
+  return { reply: "I'm food-only right now—tell me what you're craving!", category };
 }
 
 
 /* =====================
    INSTAGRAM MESSAGING
 ===================== */
-async function sendInstagramMessage(recipientId, text) {
-    if (!PAGE_ACCESS_TOKEN) {
-        console.error('PAGE_ACCESS_TOKEN missing');
-        return;
-    }
+async function sendMessage(recipientId, text, quickReplies = null) {
+  if (!PAGE_ACCESS_TOKEN) {
+    console.log('[DEV]', recipientId, ':', text?.substring(0, 80));
+    return;
+  }
 
-    // Instagram has a 1000-character limit for text messages
-    const safeText = text.length > 1000 ? text.substring(0, 997) + '...' : text;
+  const safeText = text.length > 1000 ? text.substring(0, 997) + '...' : text;
+  const payload = { recipient: { id: recipientId }, message: { text: safeText } };
 
-    try {
-        await graphClient.post(
-            'https://graph.facebook.com/v18.0/me/messages',
-            { recipient: { id: recipientId }, message: { text: safeText } },
-            { params: { access_token: PAGE_ACCESS_TOKEN } }
-        );
-        console.log(`Reply sent to ${recipientId}`);
-    } catch (err) {
-        console.error('Send failed:', err.response?.data || err.message);
-    }
+  if (quickReplies?.length) {
+    payload.message.quick_replies = quickReplies.slice(0, 13).map(q => ({
+      content_type: "text",
+      title: q.title.substring(0, 20),
+      payload: q.payload
+    }));
+  }
+
+  try {
+    await graphClient.post('https://graph.facebook.com/v18.0/me/messages', payload, { params: { access_token: PAGE_ACCESS_TOKEN } });
+  } catch (err) {
+    console.error('Send failed:', err.response?.data || err.message);
+  }
 }
 
 module.exports = {
-    handleDM,
-    processDM,
-    processQuery,
-    sendInstagramMessage,
+  handleDM,
+  processDM,
+  processDMForTest,
+  sendMessage,
+  getSenderId,
+  getIncomingTextOrPayload
 };
