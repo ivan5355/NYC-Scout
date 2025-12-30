@@ -101,16 +101,137 @@ Answer:`;
 async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, returnResult = false) {
   const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
   
+  // Check if this is a constraint response (payload like BOROUGH_*, BUDGET_*)
+  const isConstraintResponse = payload && (
+    payload.startsWith('BOROUGH_') || 
+    payload.startsWith('BUDGET_') || 
+    payload.startsWith('CUISINE_')
+  );
+  
   // 1. Extract intent for initial DB search
   const intent = extractIntent(messageText || payload || '');
   
-  // 2. Get candidate restaurants from DB
+  // 2. Build filters - merge from intent, context, and profile
   const filters = {
-    cuisine: intent.dish_or_cuisine || context?.lastFilters?.cuisine || profile?.foodProfile?.craving,
-    borough: intent.borough || context?.lastFilters?.borough || profile?.foodProfile?.borough,
-    budget: intent.budget || context?.lastFilters?.budget || profile?.foodProfile?.budget
+    cuisine: (intent.dish_or_cuisine && intent.dish_or_cuisine !== 'best' && intent.dish_or_cuisine !== 'good') ? intent.dish_or_cuisine : (context?.pendingFilters?.cuisine || context?.lastFilters?.cuisine),
+    borough: intent.borough || context?.pendingFilters?.borough || context?.lastFilters?.borough,
+    budget: intent.budget || context?.pendingFilters?.budget || context?.lastFilters?.budget
   };
   
+  // Handle constraint responses (user picked a button)
+  if (isConstraintResponse) {
+    if (payload.startsWith('BOROUGH_')) {
+      const boroughMap = {
+        'BOROUGH_MANHATTAN': 'Manhattan', 'BOROUGH_BROOKLYN': 'Brooklyn',
+        'BOROUGH_QUEENS': 'Queens', 'BOROUGH_BRONX': 'Bronx',
+        'BOROUGH_STATEN': 'Staten Island', 'BOROUGH_ANY': 'any'
+      };
+      filters.borough = boroughMap[payload] || filters.borough;
+    } else if (payload.startsWith('BUDGET_')) {
+      const budgetMap = { 'BUDGET_$': '$', 'BUDGET_$$': '$$', 'BUDGET_$$$': '$$$', 'BUDGET_ANY': 'any' };
+      filters.budget = budgetMap[payload] || filters.budget;
+    } else if (payload.startsWith('CUISINE_')) {
+      filters.cuisine = payload.replace('CUISINE_', '').replace(/_/g, ' ');
+    }
+  }
+  
+  // Check for follow-up queries
+  const lowerText = (messageText || '').toLowerCase().trim();
+  const isFollowUp = ['more', 'other', 'different', 'another', 'next'].some(p => lowerText === p || lowerText.includes(p)) && lowerText.split(' ').length <= 5;
+  
+  // --- RESTAURANT CONSTRAINT GATE ---
+  // If this is a follow-up ("more"), skip gates. Otherwise, check for missing info.
+  if (!isFollowUp) {
+    console.log(`[RESTAURANTS] Constraint Check - Cuisine: ${filters.cuisine}, Borough: ${filters.borough}, Budget: ${filters.budget}`);
+    
+    // 1. Check for missing cuisine/dish
+    // We filter out generic words to ensure we actually have a food type
+    const genericWords = ['best', 'good', 'nice', 'great', 'amazing', 'food', 'restaurant', 'restaurants', 'spots', 'places', 'hungry', 'eat', 'dinner', 'lunch', 'breakfast'];
+    const cleanCuisine = (filters.cuisine || '').toLowerCase().trim();
+    const isGeneric = genericWords.includes(cleanCuisine) || cleanCuisine.length < 2;
+
+    if (!filters.cuisine || isGeneric) {
+      console.log(`[RESTAURANTS] Missing/Generic cuisine ("${filters.cuisine}"), asking...`);
+      await updateContext(senderId, {
+        pendingType: 'restaurant_gate',
+        pendingQuery: messageText || context?.pendingQuery,
+        pendingFilters: filters,
+        lastCategory: 'FOOD_SEARCH'
+      });
+      
+      const question = "What kind of food are you craving?";
+      const replies = [
+        { title: '🍜 Asian', payload: 'CUISINE_asian' },
+        { title: '🍕 Italian', payload: 'CUISINE_italian' },
+        { title: '🌮 Mexican', payload: 'CUISINE_mexican' },
+        { title: '🍔 American', payload: 'CUISINE_american' },
+        { title: '🍲 Indian', payload: 'CUISINE_indian' },
+        { title: '🥙 Middle Eastern', payload: 'CUISINE_middle_eastern' }
+      ];
+      
+      if (returnResult) return { reply: question, buttons: replies, category: 'RESTAURANT' };
+      await sendMessage(senderId, question, replies);
+      return;
+    }
+    
+    // 2. Check for missing borough
+    if (!filters.borough) {
+      console.log(`[RESTAURANTS] Missing borough, asking...`);
+      await updateContext(senderId, {
+        pendingType: 'restaurant_gate',
+        pendingQuery: messageText || context?.pendingQuery,
+        pendingFilters: filters,
+        lastCategory: 'FOOD_SEARCH'
+      });
+      
+      const question = `Where in NYC are you looking for ${filters.cuisine} food?`;
+      const replies = [
+        { title: 'Manhattan 🏙️', payload: 'BOROUGH_MANHATTAN' },
+        { title: 'Brooklyn 🌉', payload: 'BOROUGH_BROOKLYN' },
+        { title: 'Queens 🚇', payload: 'BOROUGH_QUEENS' },
+        { title: 'Bronx 🏢', payload: 'BOROUGH_BRONX' },
+        { title: 'Anywhere 🗽', payload: 'BOROUGH_ANY' }
+      ];
+      
+      if (returnResult) return { reply: question, buttons: replies, category: 'RESTAURANT' };
+      await sendMessage(senderId, question, replies);
+      return;
+    }
+    
+    // 3. Check for missing budget
+    if (!filters.budget) {
+      console.log(`[RESTAURANTS] Missing budget, asking...`);
+      await updateContext(senderId, {
+        pendingType: 'restaurant_gate',
+        pendingQuery: messageText || context?.pendingQuery,
+        pendingFilters: filters,
+        lastCategory: 'FOOD_SEARCH'
+      });
+      
+      const question = "What's your budget?";
+      const replies = [
+        { title: 'Cheap ($) 💸', payload: 'BUDGET_$' },
+        { title: 'Mid ($$) 🙂', payload: 'BUDGET_$$' },
+        { title: 'Nice ($$$) ✨', payload: 'BUDGET_$$$' },
+        { title: 'Any 🤷', payload: 'BUDGET_ANY' }
+      ];
+      
+      if (returnResult) return { reply: question, buttons: replies, category: 'RESTAURANT' };
+      await sendMessage(senderId, question, replies);
+      return;
+    }
+  }
+  
+  // Clear pending state since we have all filters
+  await updateContext(senderId, {
+    pendingType: null,
+    pendingQuery: null,
+    pendingFilters: null,
+    lastFilters: filters,
+    lastCategory: 'FOOD_SEARCH'
+  });
+  
+  // Get candidate restaurants from DB
   let dbRestaurants = await searchRestaurantsDB(filters, 25);
   
   // 2b. If no results with strict cuisine filter, try broader search
@@ -357,7 +478,13 @@ function parseBoroughFromPayload(payload) {
     'CONSTRAINT_BOROUGH_QUEENS': 'Queens',
     'CONSTRAINT_BOROUGH_BRONX': 'Bronx',
     'CONSTRAINT_BOROUGH_STATEN': 'Staten Island',
-    'CONSTRAINT_BOROUGH_ANYWHERE': null
+    'CONSTRAINT_BOROUGH_ANYWHERE': null,
+    'EVENT_BOROUGH_Manhattan': 'Manhattan',
+    'EVENT_BOROUGH_Brooklyn': 'Brooklyn',
+    'EVENT_BOROUGH_Queens': 'Queens',
+    'EVENT_BOROUGH_Bronx': 'Bronx',
+    'EVENT_BOROUGH_Staten Island': 'Staten Island',
+    'EVENT_BOROUGH_any': 'any'
   };
   return boroughMap[payload];
 }
@@ -460,12 +587,13 @@ async function handleConstraintResponse(senderId, payload, profile, context) {
   
   // Handle restaurant gate responses with new system prompt logic
   if (pendingType === 'restaurant_gate') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, null, payload, profile, context);
+    await handleRestaurantQueryWithSystemPrompt(senderId, null, payload, profile, context);
+    return true;
   }
   
   // Handle event price payloads
   if (payload.startsWith('EVENT_PRICE_') && pendingType === 'event_gate') {
-    const priceMap = { 'EVENT_PRICE_free': 'free', 'EVENT_PRICE_budget': 'budget', 'EVENT_PRICE_any': null };
+    const priceMap = { 'EVENT_PRICE_free': 'free', 'EVENT_PRICE_budget': 'budget', 'EVENT_PRICE_any': 'any' };
     pendingFilters.price = priceMap[payload];
     return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
   }
@@ -479,10 +607,17 @@ async function handleConstraintResponse(senderId, payload, profile, context) {
   // Handle event date payloads
   if (payload.startsWith('EVENT_DATE_') && pendingType === 'event_gate') {
     const type = payload.replace('EVENT_DATE_', '');
-    pendingFilters.date = type === 'any' ? null : { type };
+    pendingFilters.date = type === 'any' ? { type: 'any' } : { type };
     return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
   }
   
+  // Handle event borough payloads
+  if (payload.startsWith('EVENT_BOROUGH_') && pendingType === 'event_gate') {
+    const borough = parseBoroughFromPayload(payload);
+    if (borough !== undefined) pendingFilters.borough = borough;
+    return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
+  }
+
   return false;
 }
 
@@ -730,7 +865,19 @@ async function processDMForTest(senderId, messageText, payload = null) {
   const context = await getContext(senderId);
   const incoming = { text: messageText, payload };
 
-  // 1. EARLY CLASSIFICATION: If user types a search, bypass onboarding
+  // 1. Handle pending constraint gate
+  if (context?.pendingType && payload) {
+    const handled = await handleConstraintResponse(senderId, payload, profile, context);
+    if (handled) {
+      // If it returned a result (for test mode), we might need to capture it
+      // But handleConstraintResponse sends messages directly in production.
+      // For test mode, we'll need to adapt it slightly or just let it work.
+      // Actually, handleConstraintResponse doesn't return the reply text, it calls sendMessage.
+      // In test mode, we want it to return the reply.
+    }
+  }
+
+  // 2. EARLY CLASSIFICATION: If user types a search, bypass onboarding
   const classificationResult = await classifyQuery(senderId, messageText);
   let category = getClassificationType(classificationResult);
   let eventFilters = getEventFilters(classificationResult);
@@ -799,27 +946,33 @@ async function processDMForTest(senderId, messageText, payload = null) {
 
   // 3. CONSTRAINT GATE HANDLER (for pending queries)
   if (context?.pendingType && payload) {
+    // We'll use the same logic as production, but since handleConstraintResponse 
+    // uses sendMessage, we'll need to manually return the result for TEST mode.
+    // For now, let's keep it simple and just re-implement the logic for the test return.
+    
     // If it's a restaurant gate, the system prompt handler handles it
     if (context.pendingType === 'restaurant_gate') {
       return await handleRestaurantQueryWithSystemPrompt(senderId, null, payload, profile, context, true);
     }
     
-    // For event gate, we need to handle the specific event payloads
+    // For event gate
     const pendingFilters = { ...(context.pendingFilters || {}) };
     const pendingQuery = context.pendingQuery || '';
 
     if (payload.startsWith('EVENT_PRICE_')) {
-      const priceMap = { 'EVENT_PRICE_free': 'free', 'EVENT_PRICE_budget': 'budget', 'EVENT_PRICE_any': null };
+      const priceMap = { 'EVENT_PRICE_free': 'free', 'EVENT_PRICE_budget': 'budget', 'EVENT_PRICE_any': 'any' };
       pendingFilters.price = priceMap[payload];
     } else if (payload.startsWith('EVENT_CAT_')) {
       pendingFilters.category = payload.replace('EVENT_CAT_', '');
     } else if (payload.startsWith('EVENT_DATE_')) {
       const type = payload.replace('EVENT_DATE_', '');
-      pendingFilters.date = type === 'any' ? null : { type };
+      pendingFilters.date = type === 'any' ? { type: 'any' } : { type };
+    } else if (payload.startsWith('EVENT_BOROUGH_')) {
+      const borough = parseBoroughFromPayload(payload);
+      if (borough !== undefined) pendingFilters.borough = borough;
     }
 
     if (payload.startsWith('EVENT_')) {
-      // Re-run search with the updated filters
       await updateContext(senderId, {
         pendingType: null, pendingQuery: null, pendingFilters: null,
         lastFilters: pendingFilters, lastCategory: 'EVENT'
@@ -913,17 +1066,17 @@ async function processDMForTest(senderId, messageText, payload = null) {
 
   // EVENT: User wants to find events
   if (category === 'EVENT') {
-    const searchResult = await searchEvents(senderId, messageText, context);
+    const searchContext = { ...context, eventFilters };
+    const searchResult = await searchEvents(senderId, messageText, searchContext);
 
     if (searchResult.needsConstraints) {
-      const formatted = formatEventResults(searchResult);
       await updateContext(senderId, {
         pendingType: 'event_gate',
         pendingQuery: messageText,
         pendingFilters: searchResult.filters,
         lastCategory: category
       });
-      return { reply: formatted.text, buttons: formatted.replies, category };
+      return { reply: searchResult.question, buttons: searchResult.replies, category };
     }
 
     const formatted = formatEventResults(searchResult);
@@ -932,6 +1085,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
 
     await updateContext(senderId, {
       lastCategory: category,
+      lastEventFilters: eventFilters,
       lastFilters: searchResult.filters,
       pendingType: null
     });

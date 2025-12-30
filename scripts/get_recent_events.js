@@ -234,28 +234,53 @@ async function fetchParksEvents() {
 
 const limit = pLimit(CONCURRENCY);
 
-function findEventsRecursive(obj) {
-  let events = [];
+function extractEventbriteEvents(jsonData) {
+  const events = [];
   
-  if (!obj || typeof obj !== 'object') return events;
+  if (!jsonData || typeof jsonData !== 'object') return events;
   
-  if (Array.isArray(obj)) {
-    obj.forEach(item => {
-      events.push(...findEventsRecursive(item));
-    });
-  } else {
-    if (obj["@type"] === "Event") {
-      events.push(obj);
-    }
-    
-    for (const key in obj) {
-      if (typeof obj[key] === 'object') {
-        events.push(...findEventsRecursive(obj[key]));
+  // New format: itemListElement array with ListItem objects
+  if (jsonData.itemListElement && Array.isArray(jsonData.itemListElement)) {
+    jsonData.itemListElement.forEach(listItem => {
+      if (listItem["@type"] === "ListItem" && listItem.item) {
+        // The event data is nested inside "item"
+        events.push({
+          name: listItem.item.name || extractNameFromUrl(listItem.item.url),
+          startDate: listItem.item.startDate,
+          endDate: listItem.item.endDate,
+          description: listItem.item.description,
+          url: listItem.item.url,
+          image: listItem.item.image,
+          location: listItem.item.location,
+          offers: listItem.item.offers
+        });
       }
-    }
+    });
+  }
+  
+  // Also check old format: direct Event objects
+  if (jsonData["@type"] === "Event") {
+    events.push(jsonData);
+  }
+  
+  // Recursively check arrays
+  if (Array.isArray(jsonData)) {
+    jsonData.forEach(item => {
+      events.push(...extractEventbriteEvents(item));
+    });
   }
   
   return events;
+}
+
+function extractNameFromUrl(url) {
+  if (!url) return 'Eventbrite Event';
+  // Extract event name from URL like: .../e/event-name-tickets-123456
+  const match = url.match(/\/e\/([^\/]+)-tickets/);
+  if (match) {
+    return match[1].replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+  return 'Eventbrite Event';
 }
 
 async function fetchEventbritePage(page) {
@@ -275,7 +300,7 @@ async function fetchEventbritePage(page) {
         if (!content || !content.trim()) return;
         
         const json = JSON.parse(content);
-        const extracted = findEventsRecursive(json);
+        const extracted = extractEventbriteEvents(json);
         events.push(...extracted);
       } catch (e) {
         // Skip invalid JSON

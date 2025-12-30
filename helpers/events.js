@@ -125,6 +125,9 @@ function buildDateQuery(dateFilter) {
   }
 
   switch (dateFilter.type) {
+    case 'any':
+      return { $gte: todayStr };
+
     case 'today':
       return todayStr;
       
@@ -347,6 +350,8 @@ async function searchEvents(userId, query, context = null) {
   // --- CONSTRAINT GATE ---
   // If this is a fresh search (not a follow-up), check what info we're missing
   if (!isFollowUp) {
+    console.log(`[EVENTS] Constraint Check - SearchTerm: ${!!filters.searchTerm}, Category: ${!!filters.category}, Date: ${!!filters.date}, Price: ${filters.price}`);
+
     // 1. Check for missing category/search term
     if (!filters.category && !filters.searchTerm) {
       console.log(`[EVENTS] Missing category/searchTerm, asking...`);
@@ -378,6 +383,39 @@ async function searchEvents(userId, query, context = null) {
           { title: 'This Weekend ✨', payload: 'EVENT_DATE_weekend' },
           { title: 'This Week 🗓️', payload: 'EVENT_DATE_this_week' },
           { title: 'Anytime 🕒', payload: 'EVENT_DATE_any' }
+        ]
+      };
+    }
+
+    // 3. Check for missing borough
+    if (!filters.borough && (isFreshSearch || !context?.lastFilters?.borough)) {
+      console.log(`[EVENTS] Missing borough, asking...`);
+      return {
+        query, filters, results: [], count: 0, needsConstraints: true,
+        constraintType: 'event_borough',
+        question: `Where in NYC are you looking for ${filters.searchTerm || filters.category || ''} events?`,
+        replies: [
+          { title: 'Manhattan 🏙️', payload: 'EVENT_BOROUGH_Manhattan' },
+          { title: 'Brooklyn 🌉', payload: 'EVENT_BOROUGH_Brooklyn' },
+          { title: 'Queens 🚇', payload: 'EVENT_BOROUGH_Queens' },
+          { title: 'Bronx 🏢', payload: 'EVENT_BOROUGH_Bronx' },
+          { title: 'Staten Island 🗽', payload: 'EVENT_BOROUGH_Staten Island' },
+          { title: 'Anywhere 🌍', payload: 'EVENT_BOROUGH_any' }
+        ]
+      };
+    }
+
+    // 4. Check for missing price (optional, but requested)
+    if ((filters.price === undefined || filters.price === null) && (isFreshSearch || (context?.lastFilters?.price === undefined))) {
+      console.log(`[EVENTS] Missing price, asking...`);
+      return {
+        query, filters, results: [], count: 0, needsConstraints: true,
+        constraintType: 'event_price',
+        question: "Any preference on price?",
+        replies: [
+          { title: 'Free 💎', payload: 'EVENT_PRICE_free' },
+          { title: 'Budget 💸', payload: 'EVENT_PRICE_budget' },
+          { title: 'Any 🤷', payload: 'EVENT_PRICE_any' }
         ]
       };
     }
@@ -421,7 +459,7 @@ async function searchEventsWithWebSearch(userId, query, filters) {
     const today = new Date().toISOString().split('T')[0];
     
     let dateHint = '';
-    if (filters.date?.type) {
+    if (filters.date?.type && filters.date.type !== 'any') {
       dateHint = ` (${filters.date.type.replace('_', ' ')})`;
     }
     
@@ -437,7 +475,7 @@ Format each as:
 🕓 Date and time
 📍 Venue
 💰 Price
-🔗 Link or source`;
+🔗 Source Name: Link`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
@@ -489,6 +527,7 @@ function formatEventResults(searchResult) {
     const price = e.price || 'Check source';
     const description = e.event_type || '';
     const link = e.link || '';
+    const source = e.source || 'Link';
 
     response += `${i + 1}. ${name}\n`;
     response += `🕓 ${date}\n`;
@@ -500,7 +539,7 @@ function formatEventResults(searchResult) {
     }
     
     if (link) {
-      response += `🔗 ${link}\n`;
+      response += `🔗 ${source}: ${link}\n`;
     }
 
     response += '\n';

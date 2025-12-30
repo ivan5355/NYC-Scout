@@ -122,21 +122,22 @@ STEP 1: Determine the HIGH-LEVEL TYPE:
 
 STEP 2: If TYPE is EVENT, extract these 3 filters:
 
-1. DATE - Extract date/time intent:
-   - "today" or "tonight" → {"type": "today"}
-   - "tomorrow" → {"type": "tomorrow"}
-   - "this weekend" → {"type": "weekend"}
-   - "this week" → {"type": "this_week"}
-   - "next week" → {"type": "next_week"}
-   - Specific date mentioned → {"type": "specific", "date": "YYYY-MM-DD"}
-   - No date mentioned → null
+1. DATE - Extract date/time intent ONLY if explicitly mentioned:
+   - "today", "tonight", "tomorrow", "weekend", "this week", "next week", "jan 5th", etc.
+   - If NO date or relative time is mentioned in the message, you MUST return: "date": null
+   - DO NOT guess a date based on the event type.
+   - DO NOT default to "next week".
 
 2. PRICE - Extract price intent:
    - "free" mentioned → "free"
    - "cheap" or "budget" or "under $X" → "budget"
    - No price mentioned → null
 
-3. CATEGORY - You MUST pick exactly ONE category from this list based on the keywords:
+3. BOROUGH - Extract borough intent:
+   - Manhattan, Brooklyn, Queens, Bronx, Staten Island
+   - No borough mentioned → null
+
+4. CATEGORY - You MUST pick exactly ONE category from this list based on the keywords:
 ${categoryHelp}
 
 Also extract the specific SEARCH_TERM (the main thing they're looking for, e.g. "soccer", "jazz", "comedy").
@@ -147,6 +148,7 @@ Return JSON only:
   "eventFilters": {
     "date": {"type": "next_week"} or null,
     "price": "free" or "budget" or null,
+    "borough": "Manhattan" or null,
     "category": "Pick from list above",
     "searchTerm": "soccer"
   }
@@ -178,9 +180,41 @@ Or for non-event queries:
       const type = parsed.type?.toUpperCase();
       
       if (type === 'EVENT') {
+        const filters = parsed.eventFilters || {};
+        const lowerText = text.toLowerCase();
+        
+        // --- STRICT DATE VERIFICATION ---
+        // If Gemini guessed a date but the user didn't mention one, force it to null
+        const dateWords = ['today', 'tonight', 'tomorrow', 'weekend', 'week', 'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun', 'morning', 'afternoon', 'evening', 'night'];
+        const hasDateMention = dateWords.some(word => lowerText.includes(word)) || /\d{1,2}\/\d{1,2}/.test(lowerText) || /\d{4}/.test(lowerText);
+        
+        if (filters.date && !hasDateMention) {
+          console.log(`[ROUTER] Gemini guessed date "${JSON.stringify(filters.date)}", but no date in user text "${text}". Nullifying.`);
+          filters.date = null;
+        }
+        
+        // --- STRICT PRICE VERIFICATION ---
+        // If Gemini guessed a price but the user didn't mention one, force it to null
+        const priceWords = ['free', 'cheap', 'budget', 'expensive', 'affordable', '$', 'dollar', 'cost', 'price'];
+        const hasPriceMention = priceWords.some(word => lowerText.includes(word));
+        
+        if (filters.price && !hasPriceMention) {
+          console.log(`[ROUTER] Gemini guessed price "${filters.price}", but no price in user text "${text}". Nullifying.`);
+          filters.price = null;
+        }
+
+        // --- STRICT BOROUGH VERIFICATION ---
+        const boroughWords = ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten island', 'staten', 'nyc', 'new york'];
+        const hasBoroughMention = boroughWords.some(word => lowerText.includes(word));
+        
+        if (filters.borough && !hasBoroughMention) {
+          console.log(`[ROUTER] Gemini guessed borough "${filters.borough}", but no borough in user text "${text}". Nullifying.`);
+          filters.borough = null;
+        }
+
         return {
           type: 'EVENT',
-          eventFilters: parsed.eventFilters || {}
+          eventFilters: filters
         };
       }
       
