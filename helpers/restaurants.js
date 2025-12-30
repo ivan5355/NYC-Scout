@@ -1,11 +1,13 @@
-const { MongoClient } = require('mongodb');
 const axios = require('axios');
 const https = require('https');
+const path = require('path');
+const { MongoClient } = require('mongodb');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 
-const geminiClient = axios.create({
+const apiClient = axios.create({
   timeout: 60000,
   httpsAgent: new https.Agent({ keepAlive: true }),
 });
@@ -13,17 +15,18 @@ const geminiClient = axios.create({
 let mongoClient = null;
 let restaurantsCollection = null;
 
-async function connectToMongoDB() {
+async function connectToRestaurants() {
   if (mongoClient && restaurantsCollection) return restaurantsCollection;
+  if (!MONGODB_URI) return null;
+
   try {
     mongoClient = new MongoClient(MONGODB_URI);
     await mongoClient.connect();
     const db = mongoClient.db('nyc-events');
     restaurantsCollection = db.collection('restaurants');
-    console.log('Connected to MongoDB restaurants collection');
     return restaurantsCollection;
   } catch (err) {
-    console.error('Failed to connect to MongoDB:', err.message);
+    console.error('Failed to connect to restaurants collection:', err.message);
     return null;
   }
 }
@@ -36,767 +39,531 @@ function normalizeForDedupe(str) {
   return str.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
 }
 
-function createDedupeKey(name, address) {
-  return `${normalizeForDedupe(name)}|${normalizeForDedupe(address)}`;
+function createDedupeKey(name, neighborhood) {
+  return `${normalizeForDedupe(name)}|${normalizeForDedupe(neighborhood)}`;
 }
 
 // =====================
-// FILTER DETECTION
+// SPOTLIGHT DETECTION
 // =====================
-const CUISINE_PATTERNS = [
-  { key: "Indian", patterns: ["indian", "curry", "tikka", "biryani", "masala", "tandoori", "naan", "samosa", "dosa"] },
-  { key: "Mexican", patterns: ["mexican", "tacos", "taqueria", "birria", "burrito", "quesadilla"] },
-  { key: "Italian", patterns: ["italian", "pizza", "pasta", "risotto", "lasagna", "trattoria"] },
-  { key: "Chinese", patterns: ["chinese", "dim sum", "dumpling", "wonton", "szechuan"] },
-  { key: "Japanese", patterns: ["japanese", "sushi", "ramen", "udon", "sashimi", "omakase"] },
-  { key: "Korean", patterns: ["korean", "kbbq", "bibimbap", "kimchi", "bulgogi"] },
-  { key: "Thai", patterns: ["thai", "pad thai", "tom yum", "satay"] },
-  { key: "Vietnamese", patterns: ["vietnamese", "pho", "banh mi"] },
-  { key: "French", patterns: ["french", "bistro", "brasserie", "crepe"] },
-  { key: "American", patterns: ["american", "burger", "steakhouse", "diner", "bbq"] },
-  { key: "Middle Eastern", patterns: ["middle eastern", "shawarma", "hummus", "kebab", "falafel", "halal"] }
-];
-
-function detectCuisine(text) {
-  const t = text.toLowerCase();
-  for (const c of CUISINE_PATTERNS) {
-    if (c.patterns.some(p => t.includes(p))) return c.key;
-  }
-  return null;
-}
-
-function detectBorough(text) {
-  const t = text.toLowerCase();
-  const boroughs = {
-    'manhattan': 'Manhattan', 'manhatten': 'Manhattan', 'midtown': 'Manhattan', 
-    'downtown': 'Manhattan', 'uptown': 'Manhattan', 'harlem': 'Manhattan', 
-    'soho': 'Manhattan', 'tribeca': 'Manhattan', 'east village': 'Manhattan', 
-    'west village': 'Manhattan', 'chelsea': 'Manhattan', 'brooklyn': 'Brooklyn', 
-    'williamsburg': 'Brooklyn', 'queens': 'Queens', 'flushing': 'Queens', 
-    'astoria': 'Queens', 'bronx': 'Bronx', 'staten island': 'Staten Island'
-  };
-  for (const [key, val] of Object.entries(boroughs)) {
-    if (t.includes(key)) return val;
-  }
-  return null;
-}
-
-function detectBudget(text) {
-  const t = text.toLowerCase();
-  if (t.includes('cheap') || t.includes('budget') || t.includes('affordable')) return '$';
-  if (t.includes('expensive') || t.includes('fancy') || t.includes('upscale')) return '$$$';
-  return null;
-}
-
-function detectOccasion(text) {
-  const t = text.toLowerCase();
-  if (t.includes('birthday') || t.includes('anniversary')) return 'celebration';
-  if (t.includes('date') || t.includes('romantic') || t.includes('girlfriend')) return 'date';
-  return null;
-}
-
-
-// =====================
-// SPOTLIGHT DETECTION (specific restaurant queries)
-// =====================
-function detectSpecificRestaurant(text) {
-  const t = text.toLowerCase().trim();
-  
-  // Skip if it's clearly a general cuisine search (not asking about specific place)
-  const cuisineOnly = /^(find|best|top|good)?\s*(indian|thai|chinese|mexican|italian|japanese|korean)\s*(food|restaurant|resto|spots?)?$/i;
-  if (cuisineOnly.test(t)) {
-    return null;
-  }
-  
-  // Patterns for specific restaurant questions - order matters!
+function detectSpotlightQuery(query) {
+  const t = query.toLowerCase();
   const patterns = [
-    // "why not soothr" -> extract "soothr"
-    /why not (?:this )?(?:\w+ )?(?:resto |restaurant )?(.+?)$/i,
-    // "what about soothr" -> extract "soothr"  
-    /what about (.+?)(?:\?|$)/i,
-    // "how about soothr"
-    /how about (.+?)(?:\?|$)/i,
-    // "is soothr good"
-    /is (.+?) good/i,
-    // "tell me about soothr"
-    /tell me about (.+?)(?:\?|$)/i,
-    // "have you heard of soothr"
-    /have you heard of (.+?)(?:\?|$)/i,
-    // "how is soothr"
-    /how is (.+?)(?:\?|$)/i
+    /why not (.+?)(?:\?|$)/i, /what about (.+?)(?:\?|$)/i,
+    /how about (.+?)(?:\?|$)/i, /how is (.+?)(?:\?|$)/i,
+    /is (.+?) good/i, /tell me about (.+?)(?:\?|$)/i,
+    /have you heard of (.+?)(?:\?|$)/i
   ];
   
   for (const pattern of patterns) {
     const match = t.match(pattern);
     if (match && match[1]) {
-      let name = match[1].trim();
-      // Clean up
-      name = name.replace(/^(the|a|an)\s+/i, '').trim();
-      name = name.replace(/\?+$/, '').trim();
-      
-      // Filter out generic/short words
-      if (name.length > 2 && !['good', 'bad', 'nice', 'great', 'it', 'this', 'that'].includes(name.toLowerCase())) {
-        console.log(`Detected spotlight query for: "${name}"`);
-        return name;
+      const name = match[1].trim().replace(/[?.!,]+$/, '').trim();
+      if (name.length > 2 && !['that', 'this', 'it', 'them'].includes(name)) {
+        return { isSpotlight: true, restaurantName: name };
       }
     }
   }
-  
-  return null;
+  return { isSpotlight: false, restaurantName: null };
 }
 
 // =====================
-// DB QUERIES
+// INTENT EXTRACTION
 // =====================
-async function fetchDBCandidates(filters, shownDedupeKeys = []) {
-  const collection = await connectToMongoDB();
-  if (!collection) return [];
-
-  const mongoQuery = {};
-
-  if (filters.cuisine) {
-    mongoQuery.$or = [
-      { cuisineDescription: { $regex: filters.cuisine, $options: 'i' } },
-      { googleTypes: { $regex: filters.cuisine.toLowerCase().replace(' ', '_'), $options: 'i' } },
-      { Name: { $regex: filters.cuisine, $options: 'i' } }
-    ];
+function extractIntent(query) {
+  const t = query.toLowerCase();
+  const intent = { query, dish_or_cuisine: null, is_dish: false, borough: null, budget: null, occasion: null, dietary: [] };
+  
+  const boroughMap = {
+    'manhattan': 'Manhattan', 'midtown': 'Manhattan', 'downtown': 'Manhattan',
+    'brooklyn': 'Brooklyn', 'williamsburg': 'Brooklyn',
+    'queens': 'Queens', 'flushing': 'Queens', 'astoria': 'Queens',
+    'bronx': 'Bronx', 'staten island': 'Staten Island'
+  };
+  for (const [key, val] of Object.entries(boroughMap)) {
+    if (t.includes(key)) { intent.borough = val; break; }
   }
-
-  if (filters.borough && filters.borough !== 'Anywhere') {
-    mongoQuery.fullAddress = { $regex: filters.borough, $options: 'i' };
+  
+  if (t.includes('cheap') || t.includes('budget')) intent.budget = '$';
+  else if (t.includes('fancy') || t.includes('upscale')) intent.budget = '$$$';
+  
+  if (t.includes('birthday') || t.includes('anniversary')) intent.occasion = 'celebration';
+  else if (t.includes('date') || t.includes('romantic')) intent.occasion = 'date';
+  
+  if (t.includes('vegetarian')) intent.dietary.push('vegetarian');
+  if (t.includes('vegan')) intent.dietary.push('vegan');
+  if (t.includes('halal')) intent.dietary.push('halal');
+  
+  const dishPatterns = [/fried rice/i, /noodles?/i, /soup/i, /burger/i, /tacos?/i, /pizza/i, /curry/i, /biryani/i, /ramen/i, /pho/i, /sushi/i, /dumpling/i, /borscht/i, /pierogi/i, /pastrami/i, /cake/i, /medovik/i, /dessert/i];
+  intent.is_dish = dishPatterns.some(p => p.test(t));
+  
+  const cuisines = ['indian', 'chinese', 'thai', 'japanese', 'korean', 'mexican', 'italian', 'french', 'vietnamese', 'russian', 'ukrainian', 'jewish', 'polish'];
+  for (const c of cuisines) {
+    if (t.includes(c)) { intent.dish_or_cuisine = c.charAt(0).toUpperCase() + c.slice(1); break; }
   }
+  if (!intent.dish_or_cuisine) {
+    intent.dish_or_cuisine = query.replace(/in (manhattan|brooklyn|queens|bronx|nyc)/gi, '').replace(/food|restaurant|spots?|places?/gi, '').trim();
+  }
+  
+  return intent;
+}
 
-  console.log('DB query:', JSON.stringify(mongoQuery));
+// =====================
+// DISH SYNONYMS - DYNAMIC WITH GEMINI
+// =====================
+async function getDishSynonyms(dish) {
+  if (!dish) return [];
+  const d = dish.toLowerCase().trim();
+  
+  // For very common terms, just return as-is
+  if (d.length < 3) return [d];
+  
+  // Use Gemini to get synonyms for any dish
+  if (GEMINI_API_KEY) {
+    try {
+      const prompt = `For the food/dish "${dish}":
+1. What cuisine is it from?
+2. What are similar dishes?
+3. What type of restaurant serves it?
+
+Return ONLY a comma-separated list of 5-7 search terms. Include: dish name, cuisine type, similar dishes, restaurant type.
+Example for "junglee mutton": junglee mutton, indian mutton, spicy lamb curry, indian restaurant, north indian, mutton masala, lamb dishes`;
+      
+      const response = await apiClient.post(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
+        { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 150, temperature: 0.2 } },
+        { params: { key: GEMINI_API_KEY } }
+      );
+      
+      const text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (text) {
+        const synonyms = text.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 1 && s.length < 50);
+        if (synonyms.length > 0) {
+          console.log(`Synonyms for "${dish}": ${synonyms.join(', ')}`);
+          return synonyms;
+        }
+      }
+    } catch (err) {
+      console.log('Synonym generation failed:', err.message);
+    }
+  }
+  
+  // Fallback: just use the original term
+  return [d];
+}
+
+// =====================
+// AMBIGUOUS DISH CLARIFICATION
+// =====================
+function getAmbiguousDishClarification(dish) {
+  if (!dish) return { needsClarification: false };
+  const d = dish.toLowerCase();
+  
+  if (d.includes('triple') && (d.includes('rice') || d.includes('schezwan'))) {
+    return {
+      needsClarification: true,
+      question: "Quick check - do you mean Mumbai-style Triple Schezwan?",
+      options: [
+        { title: "Yes, Triple Schezwan", payload: "DISH_TRIPLE_SCHEZWAN" },
+        { title: "No, just fried rice", payload: "DISH_FRIED_RICE" },
+        { title: "Any Indo-Chinese", payload: "DISH_INDO_CHINESE" }
+      ],
+      dishMappings: {
+        "DISH_TRIPLE_SCHEZWAN": { dish: "triple schezwan", cuisine: "Indo-Chinese" },
+        "DISH_FRIED_RICE": { dish: "fried rice", cuisine: "Chinese" },
+        "DISH_INDO_CHINESE": { dish: "indo-chinese", cuisine: "Indo-Chinese" }
+      }
+    };
+  }
+  return { needsClarification: false };
+}
+
+// =====================
+// SPOTLIGHT SEARCH (GEMINI WEB SEARCH)
+// =====================
+async function spotlightRestaurant(restaurantName, context = null) {
+  if (!GEMINI_API_KEY) {
+    return { text: `I don't have info on ${restaurantName}. Try Google Maps!`, isSpotlight: true };
+  }
+  
+  const borough = context?.lastIntent?.borough || 'NYC';
+  const prompt = `Research "${restaurantName}" restaurant in ${borough}.
+Return JSON only: {"found":true,"name":"","neighborhood":"","borough":"","cuisine":"","price_range":"$20-40","vibe":"","known_for":[],"tips":"","sentiment":"","why_good":"","why_skip":""}. 
+If not found, return {"found":false}. Use actual dollar amounts for price_range.`;
 
   try {
-    let results = await collection
-      .find(mongoQuery)
-      .sort({ userRatingsTotal: -1, rating: -1 })
-      .limit(100)
-      .toArray();
+    const response = await apiClient.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 1500, temperature: 0.1 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+    const text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-    // Add dedupeKey and score
-    results = results.map(r => ({
-      ...r,
-      dedupeKey: createDedupeKey(r.Name, r.fullAddress),
-      nameNorm: normalizeForDedupe(r.Name), // Use same normalization
-      qualityScore: calculateQualityScore(r, filters)
-    }));
-
-    // Filter shown
-    if (shownDedupeKeys.length > 0) {
-      const shownSet = new Set(shownDedupeKeys);
-      results = results.filter(r => !shownSet.has(r.dedupeKey));
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const info = JSON.parse(match[0]);
+      if (!info.found) return { text: `Couldn't find "${restaurantName}" in NYC.`, isSpotlight: true };
+      
+      let r = `Here's what I found about ${info.name}:\n\n`;
+      r += `📍 ${info.neighborhood}, ${info.borough}\n`;
+      r += `🍽️ ${info.cuisine} · ${info.price_range || info.price} · ${info.vibe}\n`;
+      if (info.known_for?.length) r += `🌟 Known for: ${info.known_for.join(', ')}\n`;
+      if (info.why_good) r += `💡 ${info.why_good}\n`;
+      if (info.tips) r += `📝 ${info.tips}\n`;
+      if (info.sentiment) r += `💬 ${info.sentiment}\n`;
+      r += `\nWant similar spots?`;
+      return { text: r, isSpotlight: true };
     }
-
-    // DEDUPE BY NORMALIZED NAME (prevents chains like OBAO showing twice)
-    const seenNames = new Set();
-    results = results.filter(r => {
-      const normName = r.nameNorm;
-      if (seenNames.has(normName)) {
-        console.log(`Deduped: ${r.Name} (already have ${normName})`);
-        return false;
-      }
-      seenNames.add(normName);
-      return true;
-    });
-
-    // Sort by quality and take top
-    results.sort((a, b) => b.qualityScore - a.qualityScore);
-    
-    console.log(`DB found ${results.length} unique candidates`);
-    return results.slice(0, 30);
+    return { text: `Found info but couldn't parse it. Try again?`, isSpotlight: true };
   } catch (err) {
-    console.error('DB fetch failed:', err.message);
+    console.error('Restaurant spotlight failed:', err.message);
+    return { text: `Trouble looking up ${restaurantName}. Try again?`, isSpotlight: true };
+  }
+}
+
+// =====================
+// GEMINI WEB SEARCH FOR RESTAURANTS
+// =====================
+async function searchRestaurantsWeb(intent, shownKeys = []) {
+  if (!GEMINI_API_KEY) return { results: [], error: 'API key missing' };
+  
+  const exclude = shownKeys.length ? `Exclude: ${shownKeys.map(k => k.split('|')[0]).join(', ')}` : '';
+  const synonyms = await getDishSynonyms(intent.dish_or_cuisine);
+  const area = intent.borough && intent.borough !== 'Any' ? `in ${intent.borough}` : 'in NYC';
+
+  const prompt = `Find 5-8 NYC restaurants for "${intent.dish_or_cuisine || intent.query}" ${area}.
+
+Search terms: ${synonyms.join(', ')}
+${exclude}
+
+IMPORTANT RULES:
+1. If the exact dish is rare/niche, include restaurants serving similar dishes from that cuisine
+3. Always return at least 3-5 restaurants that serve the cuisine type, even if they don't have the exact dish
+4. price_range MUST be actual dollar amounts like "$15-25" or "$30-50"
+
+Return JSON ONLY: {"results":[{"name":"","neighborhood":"","borough":"","price_range":"$20-35","why":"","what_to_order":[],"vibe":""}],"note":""}
+
+If exact dish not widely available, add a note like "Junglee mutton is rare - these Indian spots have great mutton dishes"`;
+
+  try {
+    console.log(`Gemini Search: "${intent.dish_or_cuisine}" ${area}`);
+    const response = await apiClient.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { maxOutputTokens: 2500, temperature: 0.3 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+    const text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    console.log('Search response:', text.substring(0, 400));
+    
+    const match = text.match(/\{[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      const results = validateResults(parsed.results || []);
+      console.log(`Found ${results.length} restaurants`);
+      return { results, note: parsed.note };
+    }
+    return { results: [], error: 'No JSON in response' };
+  } catch (err) {
+    console.error('Restaurant search failed:', err.message);
+    return { results: [], error: err.message };
+  }
+}
+
+// =====================
+// VALIDATE RESULTS
+// =====================
+function validateResults(results) {
+  if (!Array.isArray(results)) return [];
+  const bad = ['museum', 'tour', 'attraction', 'grocery'];
+  
+  return results.filter(r => {
+    if (!r.name || r.name.length < 2) return false;
+    if (!r.neighborhood && !r.borough) return false;
+    if (bad.some(w => r.name.toLowerCase().includes(w))) return false;
+    return true;
+  }).map(r => ({
+    ...r,
+    dedupeKey: createDedupeKey(r.name, r.neighborhood || r.borough),
+    why: r.why || '',
+    vibe: r.vibe || 'Casual',
+    price_range: r.price_range || r.price_hint || ''
+  }));
+}
+
+
+// =====================
+// GEMINI FORMATTER
+// =====================
+async function geminiFormatResponse(intent, results) {
+  if (!GEMINI_API_KEY || !results.length) return formatResultsFallback(intent, results);
+  
+  const prompt = `Format these NYC restaurants for Instagram DM. User asked for: "${intent.dish_or_cuisine || intent.query}"
+
+Results: ${JSON.stringify(results.slice(0, 5))}
+
+Format each as:
+1. NAME
+📍 Location
+💰 Price range (use the actual dollar amount like "$15-25")
+🍽️ Order: dishes
+💡 Why good
+
+End with: Reply "more" for different options.
+Keep it short. No markdown headers.`;
+
+  try {
+    const response = await apiClient.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1200, temperature: 0.3 } },
+      { params: { key: GEMINI_API_KEY } }
+    );
+    const text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (text.length > 50) return text.trim();
+  } catch (err) { console.error('Gemini format failed:', err.message); }
+  
+  return formatResultsFallback(intent, results);
+}
+
+function formatResultsFallback(intent, results) {
+  if (!results.length) return `Couldn't find spots for "${intent.dish_or_cuisine || intent.query}". Try a different area?`;
+  
+  let r = `Here are some spots:\n\n`;
+  results.slice(0, 5).forEach((x, i) => {
+    r += `${i + 1}. ${x.name.toUpperCase()}\n`;
+    r += `📍 ${x.neighborhood || ''}, ${x.borough || ''}\n`;
+    if (x.price_range) r += `💰 ${x.price_range}`;
+    if (x.vibe) r += ` · ${x.vibe}`;
+    r += '\n';
+    if (x.what_to_order?.length) r += `🍽️ ${x.what_to_order.slice(0, 2).join(', ')}\n`;
+    if (x.why) r += `💡 ${x.why}\n`;
+    r += '\n';
+  });
+  r += 'Reply "more" for different options.';
+  return r;
+}
+
+// =====================
+// DB SEARCH
+// =====================
+async function searchRestaurantsDB(filters, limit = 20) {
+  const collection = await connectToRestaurants();
+  if (!collection) {
+    console.error('No database connection for searchRestaurantsDB');
+    return [];
+  }
+
+  const query = {};
+  
+  if (filters.cuisine) {
+    // Search in cuisineDescription (case insensitive)
+    query.cuisineDescription = { $regex: new RegExp(filters.cuisine, 'i') };
+  }
+  
+  if (filters.borough && filters.borough !== 'Any' && filters.borough !== 'Anywhere') {
+    // Search for borough name in fullAddress
+    query.fullAddress = { $regex: new RegExp(filters.borough, 'i') };
+  }
+  
+  if (filters.budget) {
+    // budget is $, $$, $$$, or $$$$
+    const priceMap = { '$': 1, '$$': 2, '$$$': 3, '$$$$': 4 };
+    const level = priceMap[filters.budget];
+    if (level) query.priceLevel = level;
+  }
+
+  try {
+    const results = await collection.find(query)
+      .sort({ rating: -1, userRatingsTotal: -1 })
+      .limit(limit)
+      .toArray();
+      
+    return results.map(r => ({
+      name: r.name,
+      fullAddress: r.fullAddress,
+      rating: r.rating,
+      userRatingsTotal: r.userRatingsTotal,
+      priceLevel: r.priceLevel,
+      cuisineDescription: r.cuisineDescription,
+      reviewSummary: r.reviewSummary,
+      phoneNumber: r.phoneNumber,
+      website: r.website,
+      googleMapsUri: r.googleMapsUri,
+      openingHours: r.openingHours,
+      dedupeKey: createDedupeKey(r.name, r.fullAddress)
+    }));
+  } catch (err) {
+    console.error('DB search failed:', err.message);
     return [];
   }
 }
 
-function calculateQualityScore(r, filters) {
-  let score = 0;
-  score += (r.rating || 0) * 2;
-  score += Math.log1p(r.userRatingsTotal || 0) * 1.2;
+// =====================
+// WEB RESEARCH (FOR ENRICHMENT)
+// =====================
+async function getWebResearch(queries) {
+  if (!GEMINI_API_KEY || !queries?.length) return [];
   
-  // Penalize suspicious high ratings with low reviews
-  if (r.rating >= 4.8 && (r.userRatingsTotal || 0) < 50) {
-    score -= 3;
-  }
-  
-  // OCCASION BONUSES
-  if (filters.occasion === 'celebration' || filters.occasion === 'date') {
-    // Boost nicer restaurants for special occasions
-    if (r.priceLevel === 'Expensive' || r.priceLevel === 'Very Expensive') {
-      score += 5;
-    } else if (r.priceLevel === 'Moderate') {
-      score += 2;
-    }
-    
-    // Penalize fast food / casual chains for special occasions
-    const casualPatterns = ['pizza', 'bbq', 'deli', 'fast', 'famous', 'grill'];
-    const nameLower = (r.Name || '').toLowerCase();
-    const cuisineLower = (r.cuisineDescription || '').toLowerCase();
-    if (casualPatterns.some(p => nameLower.includes(p) || cuisineLower.includes(p))) {
-      score -= 4;
-    }
-    
-    // Boost fine dining keywords
-    const fineDiningPatterns = ['steakhouse', 'omakase', 'tasting', 'fine', 'upscale'];
-    if (fineDiningPatterns.some(p => nameLower.includes(p) || cuisineLower.includes(p))) {
-      score += 3;
-    }
-  }
-  
-  return score;
-}
+  const researchPrompt = `Research these NYC restaurant queries and provide specific details (best dishes, vibe, reservation tips).
+Queries: ${queries.join(', ')}
 
-// Lookup specific restaurant by name
-async function lookupRestaurantByName(name) {
-  const collection = await connectToMongoDB();
-  if (!collection) return null;
-
-  const searchName = name.trim();
-  console.log(`Looking up restaurant: "${searchName}"`);
+Return a list of specific snippets with sources.`;
 
   try {
-    // Try exact match first (case insensitive)
-    let result = await collection.findOne({
-      Name: { $regex: `^${escapeRegex(searchName)}$`, $options: 'i' }
-    });
-    
-    if (result) {
-      console.log(`Exact match found: ${result.Name}`);
-      return result;
-    }
-    
-    // Try starts-with match
-    result = await collection.findOne({
-      Name: { $regex: `^${escapeRegex(searchName)}`, $options: 'i' }
-    });
-    
-    if (result) {
-      console.log(`Starts-with match found: ${result.Name}`);
-      return result;
-    }
-    
-    // Try contains match (but require significant overlap)
-    if (searchName.length >= 4) {
-      result = await collection.findOne({
-        Name: { $regex: escapeRegex(searchName), $options: 'i' }
-      });
-      
-      if (result) {
-        console.log(`Contains match found: ${result.Name}`);
-        return result;
-      }
-    }
-    
-    console.log(`No match found for: "${searchName}"`);
-    return null;
-  } catch (err) {
-    console.error('Restaurant lookup failed:', err.message);
-    return null;
-  }
-}
-
-// Escape special regex characters
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-
-// =====================
-// MULTI-SOURCE WEB RESEARCH
-// Searches: Reddit, YouTube, Web, X/Twitter
-// =====================
-async function researchRestaurants(candidates, cuisine, borough) {
-  if (!GEMINI_API_KEY || candidates.length === 0) {
-    return { notesByName: {}, sources: [] };
-  }
-
-  const names = candidates.slice(0, 8).map(r => r.Name);
-  
-  const searchPrompt = `Research these ${cuisine || ''} restaurants in ${borough || 'NYC'}. 
-
-Restaurants:
-${names.map((n, i) => `${i + 1}. ${n}`).join('\n')}
-
-Search these sources:
-- Reddit: site:reddit.com/r/FoodNYC and site:reddit.com/r/AskNYC
-- YouTube: "${cuisine} NYC" restaurant reviews
-- Food blogs: Eater NY, Infatuation, TimeOut
-- Twitter/X: recent mentions
-
-For EACH restaurant, find:
-1. What to order (specific dishes)
-2. Vibe/atmosphere
-3. Reservation tips (hard to get? walk-in?)
-4. What Reddit/social media says
-
-Also search: "best ${cuisine} ${borough} NYC reddit 2024"
-
-Format your response as:
-
-**[Restaurant Name]**
-- Order: [specific dishes]
-- Vibe: [atmosphere]
-- Reservations: [tips]
-- Reddit says: [sentiment]
-
-SOURCES:
-- [list actual URLs you found]`;
-
-  try {
-    console.log(`Researching ${names.length} restaurants across web/Reddit/YouTube...`);
-    
-    const response = await geminiClient.post(
+    const response = await apiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
-        contents: [{ parts: [{ text: searchPrompt }] }],
+        contents: [{ parts: [{ text: researchPrompt }] }],
         tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 2500, temperature: 0.2 }
+        generationConfig: { maxOutputTokens: 2000, temperature: 0.2 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
-
-    // Extract text from all parts
-    const parts = response.data.candidates?.[0]?.content?.parts || [];
-    const fullText = parts.map(p => p.text || '').join('\n');
     
-    // Extract grounding metadata for sources
-    const groundingMeta = response.data.candidates?.[0]?.groundingMetadata;
-    const groundingSources = groundingMeta?.groundingChunks?.map(c => c.web?.uri).filter(Boolean) || [];
-    
-    // Parse the research text into structured data
-    const notesByName = parseResearchText(fullText, names);
-    
-    // Also extract URLs from the text itself
-    const textUrls = extractUrlsFromText(fullText);
-    const allSources = [...new Set([...groundingSources, ...textUrls])];
-    
-    console.log(`Research complete. Found info for ${Object.keys(notesByName).length} restaurants, ${allSources.length} sources`);
-    
-    return { notesByName, sources: allSources };
+    // We want to return the raw text of snippets or structured data if possible
+    // For now, let's just return the text which the system prompt will use
+    return response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   } catch (err) {
-    console.error('Research failed:', err.message);
-    return { notesByName: {}, sources: [] };
+    console.error('Web research enrichment failed:', err.message);
+    return '';
   }
 }
-
-// Parse research text into structured notes per restaurant
-function parseResearchText(text, names) {
-  const notesByName = {};
-  
-  for (const name of names) {
-    const nameNorm = normalizeForDedupe(name);
-    const notes = {
-      whatToOrder: null,
-      vibe: null,
-      reservations: null,
-      redditSays: null
-    };
-    
-    // Find section for this restaurant
-    const patterns = [
-      new RegExp(`\\*\\*${name}\\*\\*([\\s\\S]*?)(?=\\*\\*[A-Z]|SOURCES:|$)`, 'i'),
-      new RegExp(`${name}[:\\n]([\\s\\S]*?)(?=\\n\\n[A-Z]|SOURCES:|$)`, 'i')
-    ];
-    
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        const section = match[1];
-        
-        // Extract fields
-        const orderMatch = section.match(/Order:?\s*(.+?)(?:\n|$)/i);
-        if (orderMatch) notes.whatToOrder = orderMatch[1].trim();
-        
-        const vibeMatch = section.match(/Vibe:?\s*(.+?)(?:\n|$)/i);
-        if (vibeMatch) notes.vibe = vibeMatch[1].trim();
-        
-        const resMatch = section.match(/Reservations?:?\s*(.+?)(?:\n|$)/i);
-        if (resMatch) notes.reservations = resMatch[1].trim();
-        
-        const redditMatch = section.match(/Reddit(?:\s+says)?:?\s*(.+?)(?:\n|$)/i);
-        if (redditMatch) notes.redditSays = redditMatch[1].trim();
-        
-        break;
-      }
-    }
-    
-    // Only add if we found something
-    if (notes.whatToOrder || notes.redditSays) {
-      notesByName[nameNorm] = notes;
-    }
-  }
-  
-  return notesByName;
-}
-
-// Extract URLs from text
-function extractUrlsFromText(text) {
-  const urlPattern = /https?:\/\/[^\s\)\"\'<>]+/g;
-  const matches = text.match(urlPattern) || [];
-  return matches.map(url => url.replace(/[.,;:]+$/, '')); // Clean trailing punctuation
-}
-
-// Research a specific restaurant (spotlight mode)
-async function researchSpecificRestaurant(name, borough) {
-  if (!GEMINI_API_KEY) return { text: null, sources: [] };
-
-  const searchPrompt = `Research "${name}" restaurant in ${borough || 'NYC'} thoroughly.
-
-Search:
-- site:reddit.com/r/FoodNYC "${name}"
-- site:reddit.com/r/AskNYC "${name}"
-- "${name}" NYC review
-- "${name}" NYC what to order
-- YouTube "${name}" NYC restaurant
-
-Tell me:
-1. What dishes to order (be specific)
-2. The vibe/atmosphere
-3. Reservation situation
-4. What Reddit users say
-5. Any tips or warnings
-6. Price range
-
-Include source URLs.`;
-
-  try {
-    console.log(`Spotlight research for: ${name}`);
-    
-    const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
-      {
-        contents: [{ parts: [{ text: searchPrompt }] }],
-        tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 1500, temperature: 0.2 }
-      },
-      { params: { key: GEMINI_API_KEY } }
-    );
-
-    const parts = response.data.candidates?.[0]?.content?.parts || [];
-    const text = parts.map(p => p.text || '').join('\n').trim();
-    
-    const groundingMeta = response.data.candidates?.[0]?.groundingMetadata;
-    const sources = groundingMeta?.groundingChunks?.map(c => c.web?.uri).filter(Boolean) || [];
-    const textUrls = extractUrlsFromText(text);
-    
-    return { 
-      text, 
-      sources: [...new Set([...sources, ...textUrls])]
-    };
-  } catch (err) {
-    console.error('Spotlight research failed:', err.message);
-    return { text: null, sources: [] };
-  }
-}
-
 
 // =====================
 // MAIN SEARCH FUNCTION
 // =====================
 async function searchRestaurants(userId, query, providedFilters = null, foodProfile = null, context = null, skipConstraintGate = false) {
-  const lowerQuery = query.toLowerCase();
-  
-  // CHECK FOR SPOTLIGHT MODE first
-  const specificRestaurant = detectSpecificRestaurant(query);
-  if (specificRestaurant) {
-    return await handleSpotlightMode(specificRestaurant, context);
+  // Spotlight check first
+  const spotlight = detectSpotlightQuery(query);
+  if (spotlight.isSpotlight) {
+    console.log(`Spotlight: "${spotlight.restaurantName}"`);
+    const result = await spotlightRestaurant(spotlight.restaurantName, context);
+    return { query, intent: { query, spotlight: true, restaurantName: spotlight.restaurantName }, results: [], count: 0, formattedResponse: result.text, needsConstraints: false, isSpotlight: true };
   }
   
-  // Check for follow-up
-  const followUpPatterns = ['more', 'other', 'different', 'another', 'next'];
-  const isFollowUp = followUpPatterns.some(p => lowerQuery.includes(p)) && lowerQuery.split(' ').length <= 5;
-
-  // Build filters
-  let filters = {};
-  const hasProvidedFilters = providedFilters && Object.keys(providedFilters).length > 0;
+  let intent = extractIntent(query);
+  console.log(`[RESTAURANTS] Extracted intent for "${query}":`, JSON.stringify(intent, null, 2));
   
-  if (hasProvidedFilters) {
-    filters = { ...providedFilters };
-    skipConstraintGate = true;
-  } else if (isFollowUp && context?.lastFilters) {
-    filters = { ...context.lastFilters };
-    skipConstraintGate = true;
-  } else {
-    filters.cuisine = detectCuisine(query);
-    filters.borough = detectBorough(query);
-    filters.budget = detectBudget(query);
-    filters.occasion = detectOccasion(query);
+  // Apply filters
+  if (providedFilters) {
+    if (providedFilters.borough) intent.borough = providedFilters.borough;
+    if (providedFilters.budget) intent.budget = providedFilters.budget;
+    if (providedFilters.dishQuery) intent.dish_or_cuisine = providedFilters.dishQuery;
+    if (providedFilters.resolvedDish) { intent.dish_or_cuisine = providedFilters.resolvedDish.dish; intent.is_dish = true; }
   }
-
-  // Apply profile defaults
+  
+  // Profile defaults
   if (foodProfile) {
-    if (!filters.borough && foodProfile.borough) filters.borough = foodProfile.borough;
-    if (!filters.budget && foodProfile.budget) filters.budget = foodProfile.budget;
+    if (!intent.borough && foodProfile.borough) intent.borough = foodProfile.borough;
+    if (!intent.budget && foodProfile.budget) intent.budget = foodProfile.budget;
   }
-
-  // CONSTRAINT GATE: Ask ONE question if needed
-  if (!skipConstraintGate && filters.cuisine && !filters.borough) {
+  
+  // Follow-up handling ("more", "other", etc.)
+  const lower = query.toLowerCase().trim();
+  const isFollowUp = ['more', 'other', 'different', 'another', 'next'].some(p => lower === p || lower === `show ${p}` || lower === `${p} options`);
+  
+  if (isFollowUp) {
+    console.log('Follow-up detected, checking pool...');
+    
+    if (context?.pool?.length > 0) {
+      const page = (context.page || 0) + 1;
+      const startIdx = page * 5;
+      const batch = context.pool.slice(startIdx, startIdx + 5);
+      
+      if (batch.length > 0) {
+        console.log(`Serving page ${page} from pool (${batch.length} items)`);
+        const formatted = await geminiFormatResponse(context.lastIntent || intent, batch);
+        return { query, intent: context.lastIntent || intent, results: batch, count: batch.length, formattedResponse: formatted, needsConstraints: false, pool: context.pool, page };
+      }
+    }
+    
+    // No more results in pool - tell user
+    if (context?.lastIntent) {
+      const dish = context.lastIntent.dish_or_cuisine || context.lastIntent.query;
+      return { 
+        query, 
+        intent: context.lastIntent, 
+        results: [], 
+        count: 0, 
+        formattedResponse: `That's all I found for "${dish}". Want to try a different dish or area?`,
+        needsConstraints: false 
+      };
+    }
+  }
+  
+  // Dish clarification gate
+  if (!skipConstraintGate && intent.is_dish && intent.dish_or_cuisine && !providedFilters?.resolvedDish) {
+    const clarification = getAmbiguousDishClarification(intent.dish_or_cuisine);
+    if (clarification.needsClarification) {
+      return {
+        query, intent, results: [], count: 0, needsConstraints: true,
+        pendingFilters: { dishQuery: intent.dish_or_cuisine, dishClarification: clarification.dishMappings, borough: intent.borough },
+        geminiResponse: { type: 'question', message: clarification.question, followUpQuestion: { text: clarification.question, replies: clarification.options } }
+      };
+    }
+  }
+  
+  // Area gate
+  if (!skipConstraintGate && !intent.borough && intent.dish_or_cuisine) {
     return {
-      query, filters, results: [], count: 0,
-      needsConstraints: true,
-      pendingFilters: filters,
+      query, intent, results: [], count: 0, needsConstraints: true,
+      pendingFilters: { dishQuery: intent.dish_or_cuisine, resolvedDish: providedFilters?.resolvedDish },
       geminiResponse: {
-        type: 'question',
-        message: 'Quick one — what area?',
+        type: 'question', message: 'Nice choice! Where in NYC?',
         followUpQuestion: {
-          text: 'Quick one — what area?',
+          text: 'Nice choice! Where in NYC?',
           replies: [
-            { title: 'Manhattan 🏙', payload: 'BOROUGH_MANHATTAN' },
-            { title: 'Brooklyn 🌉', payload: 'BOROUGH_BROOKLYN' },
-            { title: 'Queens 🚇', payload: 'BOROUGH_QUEENS' },
-            { title: 'Anywhere 🌍', payload: 'BOROUGH_ANY' }
+            { title: 'Manhattan', payload: 'BOROUGH_MANHATTAN' },
+            { title: 'Brooklyn', payload: 'BOROUGH_BROOKLYN' },
+            { title: 'Queens', payload: 'BOROUGH_QUEENS' },
+            { title: 'Anywhere', payload: 'BOROUGH_ANY' }
           ]
         }
       }
     };
   }
 
-  const shownDedupeKeys = context?.shownDedupeKeys || [];
-
-  // STEP 1: Fetch from DB
-  let candidates = await fetchDBCandidates(filters, shownDedupeKeys);
-
-  if (candidates.length === 0) {
-    return {
-      query, filters, results: [], count: 0,
-      needsConstraints: false,
-      message: filters.cuisine 
-        ? `No ${filters.cuisine} spots found${filters.borough ? ' in ' + filters.borough : ''}. Try a different area?`
-        : "What cuisine are you craving?"
-    };
-  }
-
-  // STEP 2: Research top candidates
-  const { notesByName, sources } = await researchRestaurants(
-    candidates.slice(0, 10), 
-    filters.cuisine, 
-    filters.borough
-  );
-
-  // Merge research into candidates
-  candidates = candidates.map(c => {
-    const notes = notesByName[normalizeForDedupe(c.Name)];
-    return notes ? { ...c, research: notes } : c;
-  });
-
-  const finalResults = candidates.slice(0, 5);
-
-  return {
-    query, filters,
-    results: finalResults,
-    count: finalResults.length,
-    sources,
-    needsConstraints: false,
-    researchWorked: Object.keys(notesByName).length > 0
-  };
-}
-
-// SPOTLIGHT MODE
-async function handleSpotlightMode(restaurantName, context) {
-  console.log(`Spotlight mode for: ${restaurantName}`);
+  // Search
+  const shownNames = context?.shownNames || [];
+  const { results, error, note } = await searchRestaurantsWeb(intent, shownNames);
   
-  const dbResult = await lookupRestaurantByName(restaurantName);
-  const borough = context?.lastFilters?.borough || 'NYC';
-  const { text: researchText, sources } = await researchSpecificRestaurant(restaurantName, borough);
-  
-  if (dbResult) {
-    return {
-      query: restaurantName, filters: {},
-      results: [{
-        ...dbResult,
-        dedupeKey: createDedupeKey(dbResult.Name, dbResult.fullAddress),
-        spotlightResearch: researchText
-      }],
-      count: 1,
-      sources,
-      isSpotlight: true,
-      needsConstraints: false
-    };
-  } else {
-    return {
-      query: restaurantName, filters: {},
-      results: [], count: 0,
-      isSpotlight: true,
-      notInDB: true,
-      spotlightName: restaurantName,
-      spotlightResearch: researchText,
-      sources,
-      needsConstraints: false
-    };
+  if (!results.length) {
+    return { query, intent, results: [], count: 0, needsConstraints: false, message: error || `Couldn't find spots for "${intent.dish_or_cuisine}". Try a different area?` };
   }
+  
+  const top5 = results.slice(0, 5);
+  let formatted = await geminiFormatResponse(intent, top5);
+  if (note) formatted = `(Note: ${note})\n\n${formatted}`;
+  
+  return { query, intent, results: top5, count: top5.length, formattedResponse: formatted, needsConstraints: false, pool: results, page: 0 };
 }
-
 
 // =====================
 // FORMAT RESULTS
 // =====================
 function formatRestaurantResults(searchResult) {
-  // Question mode
   if (searchResult.needsConstraints && searchResult.geminiResponse?.type === 'question') {
-    return {
-      text: searchResult.geminiResponse.message,
-      replies: searchResult.geminiResponse.followUpQuestion?.replies || [],
-      isQuestion: true,
-      pendingFilters: searchResult.pendingFilters
-    };
+    return { text: searchResult.geminiResponse.message, replies: searchResult.geminiResponse.followUpQuestion?.replies || [], isQuestion: true, pendingFilters: searchResult.pendingFilters };
   }
-
-  // Spotlight mode
-  if (searchResult.isSpotlight) {
-    return formatSpotlightResult(searchResult);
+  if (!searchResult.count || !searchResult.formattedResponse) {
+    return { text: searchResult.message || "What are you craving?", isQuestion: false };
   }
-
-  // No results
-  if (searchResult.count === 0) {
-    return { text: searchResult.message || "What cuisine are you craving?", isQuestion: false };
-  }
-
-  // Format regular results
-  const { cuisine, borough } = searchResult.filters || {};
-  let response = cuisine 
-    ? `Here are the top ${cuisine} spots${borough ? ' in ' + borough : ''}:\n\n`
-    : `Here are some top picks:\n\n`;
-
-  searchResult.results.forEach((r, i) => {
-    response += `${i + 1}. ${r.Name}\n`;
-    response += `📍 ${formatAddress(r.fullAddress)}\n`;
-    
-    if (r.rating) {
-      const reviews = r.userRatingsTotal ? `(${r.userRatingsTotal.toLocaleString()} reviews)` : '';
-      response += `⭐ ${r.rating} ${reviews}`;
-      if (r.priceLevel) response += ` · 💲${formatPrice(r.priceLevel)}`;
-      response += '\n';
-    }
-    
-    // Research data
-    if (r.research?.whatToOrder) {
-      response += `🍽️ Order: ${r.research.whatToOrder}\n`;
-    }
-    if (r.research?.redditSays) {
-      response += `💬 Reddit: ${r.research.redditSays}\n`;
-    }
-    if (r.research?.reservations) {
-      response += `📞 ${r.research.reservations}\n`;
-    }
-    
-    // Fallback to DB summary if no research
-    if (!r.research && r.reviewSummary) {
-      const summary = r.reviewSummary.length > 80 ? r.reviewSummary.substring(0, 80) + '...' : r.reviewSummary;
-      response += `💡 ${summary}\n`;
-    }
-    
-    response += '\n';
-  });
-
-  response += 'Reply "more" for different options.';
-
-  // Add sources if we have them
-  if (searchResult.sources?.length > 0) {
-    const validSources = searchResult.sources.filter(s => s && typeof s === 'string').slice(0, 4);
-    if (validSources.length > 0) {
-      response += '\n\n📚 Sources:\n';
-      validSources.forEach(s => {
-        response += `• ${formatSourceUrl(s)}\n`;
-      });
-    }
-  } else if (!searchResult.researchWorked) {
-    // Research failed - be honest
-    response += '\n\n(Web research unavailable - showing DB ratings)';
-  }
-
-  return { text: response.trim(), replies: [], isQuestion: false };
-}
-
-function formatSpotlightResult(searchResult) {
-  const name = searchResult.spotlightName || searchResult.query;
-  
-  if (searchResult.notInDB) {
-    let response = `"${name}" isn't in our database yet.\n\n`;
-    if (searchResult.spotlightResearch) {
-      response += `Here's what I found online:\n\n${searchResult.spotlightResearch}`;
-    } else {
-      response += "Couldn't find much info online either. Try searching directly!";
-    }
-    
-    if (searchResult.sources?.length > 0) {
-      response += '\n\n📚 Sources:\n';
-      searchResult.sources.slice(0, 3).forEach(s => {
-        response += `• ${formatSourceUrl(s)}\n`;
-      });
-    }
-    
-    return { text: response.trim(), isQuestion: false };
-  }
-  
-  // In DB
-  const r = searchResult.results[0];
-  let response = `Here's what I know about ${r.Name}:\n\n`;
-  response += `📍 ${r.fullAddress || 'NYC'}\n`;
-  
-  if (r.rating) {
-    response += `⭐ ${r.rating} (${r.userRatingsTotal?.toLocaleString() || '?'} reviews)\n`;
-  }
-  if (r.priceLevel) response += `💲 ${r.priceLevel}\n`;
-  if (r.cuisineDescription) response += `🍽️ ${r.cuisineDescription}\n`;
-  if (r.phoneNumber) response += `📞 ${r.phoneNumber}\n`;
-  
-  if (r.spotlightResearch) {
-    response += `\n📰 What people say:\n${r.spotlightResearch}`;
-  }
-  
-  if (searchResult.sources?.length > 0) {
-    response += '\n\n📚 Sources:\n';
-    searchResult.sources.slice(0, 3).forEach(s => {
-      response += `• ${formatSourceUrl(s)}\n`;
-    });
-  }
-  
-  return { text: response.trim(), isQuestion: false };
-}
-
-// Helpers
-function formatAddress(address) {
-  if (!address) return 'NYC';
-  const parts = address.split(',');
-  return parts.length >= 2 ? parts.slice(0, 2).join(',').trim() : address;
-}
-
-function formatPrice(priceLevel) {
-  const map = { 'Inexpensive': '$', 'Moderate': '$$', 'Expensive': '$$$' };
-  return map[priceLevel] || priceLevel || '';
-}
-
-function formatSourceUrl(url) {
-  if (!url || typeof url !== 'string') return '';
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace('www.', '');
-    const path = u.pathname.length > 30 ? u.pathname.substring(0, 30) + '...' : u.pathname;
-    return `${host}${path !== '/' ? path : ''}`;
-  } catch {
-    return url.length > 50 ? url.substring(0, 50) + '...' : url;
-  }
+  return { text: searchResult.formattedResponse, replies: [], isQuestion: false };
 }
 
 // =====================
 // EXPORTS
 // =====================
 module.exports = {
-  searchRestaurants,
-  formatRestaurantResults,
-  detectCuisine,
-  detectBorough,
-  detectBudget,
-  detectOccasion,
-  detectSpecificRestaurant,
-  createDedupeKey,
-  normalizeForDedupe
+  searchRestaurants, formatRestaurantResults, extractIntent,
+  detectSpotlightQuery, spotlightRestaurant, createDedupeKey, normalizeForDedupe,
+  searchRestaurantsDB, getWebResearch
 };
-
-process.on('SIGINT', async () => {
-  if (mongoClient) await mongoClient.close();
-  process.exit(0);
-});

@@ -146,7 +146,7 @@ Instagram DM → Facebook Webhook → Vercel (api/api.js)
             Instagram Graph API (POST /me/messages)
 ```
 
-*Note: Event queries may fall back to Gemini Web Search when no local results are found; restaurant queries do not use web search fallback.*
+*Note: Both event and restaurant queries may fall back to Gemini Web Search when no local results are found.*
    
 
 ## Data Sources
@@ -161,8 +161,8 @@ The application uses multiple data sources with intelligent fallbacks:
 - **NYC Restaurants**: Curated database of NYC restaurants with cuisine types, ratings, and locations.
   - Source: [NYC DOHMH Restaurant Inspections](https://data.cityofnewyork.us/Health/DOHMH-New-York-City-Restaurant-Inspection-Results/43nn-pn8j) (Managed via MongoDB)
 
-### Fallback: Gemini Web Search (Events Only)
-When local event APIs return no results, the bot automatically uses **Gemini 2.0 Flash with Google Search** to find real-time event information from the web. This ensures users find something to do even if the official city feeds are empty. Restaurant searches do not use this fallback.
+### Fallback: Gemini Web Search
+When local event APIs or the restaurant database return no results, the bot automatically uses **Gemini 2.0 Flash with Google Search** to find real-time information from the web. This ensures users find something to do or eat even if the official databases are empty or missing a specific niche dish.
 
 ## File Structure
 
@@ -184,7 +184,7 @@ When local event APIs return no results, the bot automatically uses **Gemini 2.0
    - **If RESTAURANT**: 
      - Gemini extracts `cuisine`, `borough`, `priceLevel`, and `searchTerm`
      - Searches MongoDB database for matching restaurants
-     - Returns results found in the database (no AI fallback if zero results)
+     - **Fallback**: If no results, uses Gemini Web Search to find spots on the web
    - **If EVENT**: 
      - Gemini extracts `category`, `date`, `borough`, and `searchTerm`
      - Fetches live data from NYC Permitted Events and NYC Parks APIs
@@ -293,7 +293,7 @@ The system implements strict rate limits to manage API costs, persisted in **Mon
 
 ### Limits
 1. **AI Requests (Gemini)**: Max **20 requests per user/day**. This includes general query classification and smart filter extraction.
-2. **Web Searches (Gemini)**: Max **4 searches per user/day**. This is a more expensive operation used for finding events not in the local database.
+2. **Web Searches (Gemini)**: Max **4 searches per user/day**. This uses Gemini with Google Search for finding events and restaurants not in the local database.
 
 ### Fallback Behavior
 When a user hits their limits, the bot *does not* stop working. Instead, it degrades gracefully to standard, non-AI search methods:
@@ -301,6 +301,6 @@ When a user hits their limits, the bot *does not* stop working. Instead, it degr
 | Feature | Normal (Limit < 20) | Fallback (Limit Reached) |
 | :--- | :--- | :--- |
 | **Query Classification** | Gemini AI classifies intent (Eat vs Event). | **Keyword Matching**: Scans for terms like "food", "pizza" vs "concert", "show". |
-| **Restaurant Search** | Gemini AI extracts complex filters (e.g., "romantic Italian"). | **Heuristic Extraction**: Matches specific keywords against known cuisines and boroughs. |
-| **Event Search** | Gemini AI extracts smart filters (Category, Date, etc.). | **Heuristic Extraction**: Matches keywords against `event_filters.json` categories and simple date terms ("today", "weekend"). |
-| **Web Search** | If no local events found, AI searches Google. | **Skipped**: Returns only local results. If none found, simply reports "No events found". |
+| **Restaurant Search** | Gemini AI researched spots (e.g., "romantic Italian"). | **Heuristic Extraction**: Matches specific keywords against known cuisines and boroughs. |
+| **Event Search** | Gemini AI finds upcoming events (Category, Date, etc.). | **Heuristic Extraction**: Matches keywords against `event_filters.json` categories and simple date terms ("today", "weekend"). |
+| **Web Search** | If no local results found, AI searches Gemini. | **Skipped**: Returns only local results. If none found, simply reports "No events found". |

@@ -3,6 +3,8 @@
 // Now includes conversation context for "show me more"
 
 const { MongoClient } = require('mongodb');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 
@@ -40,7 +42,8 @@ async function getOrCreateProfile(senderId) {
         username: null,
         onboarding: {
           completed: false,
-          step: 0,
+          step: -1,  // -1 = category selection, 0 = food onboarding start
+          category: null,  // 'food' or 'events'
           startedAt: null,
           completedAt: null
         },
@@ -256,7 +259,8 @@ async function resetOnboarding(senderId) {
       { 
         $set: { 
           'onboarding.completed': false,
-          'onboarding.step': 0,
+          'onboarding.step': -1,
+          'onboarding.category': null,
           'onboarding.startedAt': null,
           'onboarding.completedAt': null,
           'foodProfile.dietary': [],

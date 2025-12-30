@@ -1,5 +1,14 @@
 // Food onboarding question config - exact texts approved
 const FOOD_ONBOARDING = {
+  // Initial category selection - shown to new users first
+  CATEGORY_SELECT: {
+    text: "Hey! 👋 I'm NYC Scout — your guide to the best spots in the city.\n\nWhat are you looking for today?",
+    replies: [
+      { title: "🍽️ Restaurants", payload: "CATEGORY_FOOD" },
+      { title: "🎉 Events", payload: "CATEGORY_EVENTS" }
+    ]
+  },
+
   START: {
     text: "NYC Scout here 🗽 Want personalized food recs? 5 quick questions (20 sec).",
     replies: [

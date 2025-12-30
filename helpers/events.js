@@ -1,295 +1,390 @@
 const axios = require('axios');
 const https = require('https');
-const fs = require('fs');
 const path = require('path');
+const { MongoClient } = require('mongodb');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 
 const geminiClient = axios.create({
   timeout: 30000,
   httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
-const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9vvx.json';
-const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.json';
+/* =====================
+   MONGODB CONNECTION
+===================== */
 
-// Ticket source trust hints
-const SOURCE_HINTS = {
-  'dice': { name: 'DICE', hint: 'Ticket policy: check before buying' },
-  'ra': { name: 'Resident Advisor', hint: 'Ticket policy: check before buying' },
-  'eventbrite': { name: 'Eventbrite', hint: 'Ticket policy: check before buying' },
-  'fever': { name: 'Fever', hint: 'Double-check refund policy before purchasing' },
-  'luma': { name: 'Luma', hint: 'Ticket policy: check before buying' },
-  'meetup': { name: 'Meetup', hint: 'Usually free or low cost' }
-};
+let mongoClient = null;
+let eventsCollection = null;
 
-// Convert 12-hour time to 24-hour format
-function parseTime12h(timeStr) {
-  if (!timeStr) return '00:00:00';
+async function connectToEvents() {
+  if (mongoClient && eventsCollection) return eventsCollection;
+  if (!MONGODB_URI) {
+    console.error('No MONGODB_URI found for events');
+    return null;
+  }
+
   try {
-    const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
-    if (!match) return '00:00:00';
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    const db = mongoClient.db('goodrec');
+    eventsCollection = db.collection('events');
+    console.log('Connected to events collection');
+    return eventsCollection;
+  } catch (err) {
+    console.error('Failed to connect to events collection:', err.message);
+    return null;
+  }
+}
+
+/* =====================
+   FETCH FROM MONGODB
+===================== */
+
+async function fetchAllEvents() {
+  const collection = await connectToEvents();
+  if (!collection) {
+    console.log('No DB connection, returning empty events');
+    return [];
+  }
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    const events = await collection.find({
+      isActive: true,
+      date: { $gte: today }
+    })
+    .sort({ date: 1 })
+    .limit(500)
+    .toArray();
+
+    console.log(`Fetched ${events.length} events from MongoDB`);
+    return events.map(mapEventToFormat);
+  } catch (err) {
+    console.error('Failed to fetch events from MongoDB:', err.message);
+    return [];
+  }
+}
+
+/* =====================
+   HELPERS
+===================== */
+
+function mapEventToFormat(e) {
+  return {
+    event_id: e._id.toString(),
+    event_name: e.name,
+    start_date_time: e.date && e.time ? `${e.date}T${convertTimeTo24h(e.time)}` : e.date,
+    event_type: e.description,
+    event_borough: extractBoroughFromLocation(e.location),
+    event_location: e.location,
+    price: e.price || 'Check source',
+    source: e.platform || e.source,
+    link: e.link
+  };
+}
+
+function convertTimeTo24h(timeStr) {
+  if (!timeStr) return '12:00:00';
+  try {
+    const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return '12:00:00';
     let [, hours, minutes, period] = match;
     hours = parseInt(hours, 10);
-    if (period.toLowerCase() === 'pm' && hours !== 12) hours += 12;
-    if (period.toLowerCase() === 'am' && hours === 12) hours = 0;
+    if (period.toUpperCase() === 'PM' && hours !== 12) hours += 12;
+    if (period.toUpperCase() === 'AM' && hours === 12) hours = 0;
     return `${hours.toString().padStart(2, '0')}:${minutes}:00`;
   } catch {
-    return '00:00:00';
+    return '12:00:00';
   }
 }
 
-// Fetch NYC permitted events
-async function fetchPermittedEvents() {
-  const today = new Date().toISOString().split('T')[0];
-  try {
-    const response = await axios.get(NYC_PERMITTED_EVENTS_URL, {
-      params: {
-        '$where': `start_date_time >= '${today}'`,
-        '$order': 'start_date_time',
-        '$limit': 500
-      },
-      timeout: 10000
-    });
-
-    return response.data.map(event => ({
-      event_id: event.event_id,
-      event_name: event.event_name,
-      start_date_time: event.start_date_time,
-      end_date_time: event.end_date_time,
-      event_agency: event.event_agency,
-      event_type: event.event_type,
-      event_borough: event.event_borough,
-      event_location: event.event_location,
-      price: 'Check source',
-      source: 'NYC Open Data'
-    }));
-  } catch (err) {
-    console.error('Permitted events failed:', err.message);
-    return [];
+function extractBoroughFromLocation(location) {
+  if (!location) return null;
+  const boroughs = ['Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island'];
+  for (const b of boroughs) {
+    if (location.includes(b)) return b;
   }
+  return null;
 }
 
-// Fetch NYC Parks events
-async function fetchParksEvents() {
-  try {
-    const response = await axios.get(NYC_PARKS_EVENTS_URL, { timeout: 10000 });
-    const boroughMap = { M: 'Manhattan', B: 'Brooklyn', Q: 'Queens', X: 'Bronx', R: 'Staten Island' };
+/* =====================
+   BUILD DATE QUERY FROM GEMINI FILTER
+===================== */
 
-    return response.data.map(event => {
-      const startDate = event.startdate || '';
-      const parkId = event.parkids || '';
-      const borough = boroughMap[parkId[0]?.toUpperCase()] || null;
-
-      return {
-        event_id: event.guid,
-        event_name: event.title,
-        start_date_time: startDate ? `${startDate}T${parseTime12h(event.starttime)}` : null,
-        end_date_time: event.enddate ? `${event.enddate}T${parseTime12h(event.endtime)}` : null,
-        event_agency: 'NYC Parks',
-        event_type: event.categories,
-        event_borough: borough,
-        event_location: event.location,
-        price: 'Free',
-        source: 'NYC Parks'
-      };
-    });
-  } catch (err) {
-    console.error('Parks events failed:', err.message);
-    return [];
-  }
-}
-
-// Combine both event sources
-async function fetchAllEvents() {
-  const [permitted, parks] = await Promise.all([
-    fetchPermittedEvents(),
-    fetchParksEvents()
-  ]);
-  console.log(`Fetched ${permitted.length} permitted + ${parks.length} parks events`);
-  return [...permitted, ...parks];
-}
-
-
-// Check if event query is too vague
-function isVagueEventQuery(query, filters) {
-  const lowerQuery = query.toLowerCase();
-  
-  const hasDate = filters.date || 
-    ['today', 'tonight', 'tomorrow', 'weekend', 'this week'].some(d => lowerQuery.includes(d));
-  
-  const hasPrice = filters.priceFilter || 
-    ['free', 'cheap', 'under'].some(p => lowerQuery.includes(p));
-  
-  const hasCategory = filters.category || filters.searchTerm;
-  
-  // Vague if no date AND no price hint
-  return !hasDate && !hasPrice && hasCategory;
-}
-
-// Extract event filters (heuristic)
-function extractEventFiltersHeuristic(query) {
-  const filters = {};
-  const lowerQuery = query.toLowerCase();
-
-  // Boroughs
-  const boroughs = {
-    'manhattan': 'Manhattan', 'manhatten': 'Manhattan', 'brooklyn': 'Brooklyn', 
-    'queens': 'Queens', 'bronx': 'Bronx', 'staten island': 'Staten Island'
-  };
-  for (const [key, val] of Object.entries(boroughs)) {
-    if (lowerQuery.includes(key)) {
-      filters.borough = val;
-      break;
-    }
-  }
-
-  // Date filters
+function buildDateQuery(dateFilter) {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
-  if (lowerQuery.includes('today') || lowerQuery.includes('tonight')) {
-    filters.date = { type: 'specific', date: todayStr };
-  } else if (lowerQuery.includes('tomorrow')) {
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    filters.date = { type: 'specific', date: tomorrow.toISOString().split('T')[0] };
-  } else if (lowerQuery.includes('weekend') || lowerQuery.includes('this weekend')) {
-    const dayOfWeek = today.getDay();
-    const daysUntilFriday = (5 - dayOfWeek + 7) % 7;
-    const friday = new Date(today);
-    friday.setDate(today.getDate() + daysUntilFriday);
-    const sunday = new Date(friday);
-    sunday.setDate(friday.getDate() + 2);
-    filters.date = { 
-      type: 'range', 
-      start_date: friday.toISOString().split('T')[0],
-      end_date: sunday.toISOString().split('T')[0]
-    };
-  } else if (lowerQuery.includes('this week')) {
-    const endOfWeek = new Date(today);
-    endOfWeek.setDate(today.getDate() + 7);
-    filters.date = {
-      type: 'range',
-      start_date: todayStr,
-      end_date: endOfWeek.toISOString().split('T')[0]
-    };
+  if (!dateFilter || !dateFilter.type) {
+    // Default: today onwards
+    return { $gte: todayStr };
   }
 
-  // Price filter
-  if (lowerQuery.includes('free')) {
-    filters.priceFilter = 'free';
-  } else if (lowerQuery.includes('under $30') || lowerQuery.includes('cheap')) {
-    filters.priceFilter = 'budget';
-  }
-
-  // Indoor/outdoor
-  if (lowerQuery.includes('indoor')) {
-    filters.indoor = true;
-  } else if (lowerQuery.includes('outdoor')) {
-    filters.outdoor = true;
-  }
-
-  // Categories
-  const categories = ['concert', 'comedy', 'music', 'art', 'theater', 'festival', 'sports', 'food', 'market', 'tour', 'yoga', 'fitness'];
-  for (const cat of categories) {
-    if (lowerQuery.includes(cat)) {
-      filters.category = cat;
-      break;
+  switch (dateFilter.type) {
+    case 'today':
+      return todayStr;
+      
+    case 'tomorrow': {
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      return tomorrow.toISOString().split('T')[0];
     }
-  }
-
-  // Search term fallback
-  if (!filters.category) {
-    const stopWords = new Set(['event', 'events', 'in', 'on', 'at', 'the', 'a', 'find', 'me', 'things', 'to', 'do', 'what', 'is', 'are', 'happening']);
-    const words = lowerQuery.split(/\s+/).filter(w => !stopWords.has(w) && w.length > 2);
-    if (words.length > 0) {
-      filters.searchTerm = words.join(' ');
+    
+    case 'weekend': {
+      const dayOfWeek = today.getDay();
+      // Find next Friday (or today if it's Fri-Sun)
+      let daysUntilFriday = (5 - dayOfWeek + 7) % 7;
+      if (dayOfWeek >= 5) daysUntilFriday = 0; // Already weekend
+      const friday = new Date(today);
+      friday.setDate(today.getDate() + daysUntilFriday);
+      const sunday = new Date(friday);
+      sunday.setDate(friday.getDate() + 2);
+      return { 
+        $gte: friday.toISOString().split('T')[0], 
+        $lte: sunday.toISOString().split('T')[0] 
+      };
     }
-  }
-
-  return filters;
-}
-
-// Apply filters to event list
-function applyFilters(events, filters) {
-  let results = [...events];
-
-  if (filters.date) {
-    results = results.filter(event => {
-      const startDt = event.start_date_time;
-      if (!startDt) return false;
-      const eventDate = startDt.split('T')[0];
-
-      if (filters.date.type === 'specific') return eventDate === filters.date.date;
-      if (filters.date.type === 'range') {
-        return eventDate >= filters.date.start_date && eventDate <= filters.date.end_date;
+    
+    case 'this_week': {
+      const endOfWeek = new Date(today);
+      endOfWeek.setDate(today.getDate() + 7);
+      return { 
+        $gte: todayStr, 
+        $lte: endOfWeek.toISOString().split('T')[0] 
+      };
+    }
+    
+    case 'next_week': {
+      const startOfNextWeek = new Date(today);
+      startOfNextWeek.setDate(today.getDate() + 7);
+      const endOfNextWeek = new Date(today);
+      endOfNextWeek.setDate(today.getDate() + 14);
+      return { 
+        $gte: startOfNextWeek.toISOString().split('T')[0], 
+        $lte: endOfNextWeek.toISOString().split('T')[0] 
+      };
+    }
+    
+    case 'specific':
+      if (dateFilter.date) {
+        return dateFilter.date;
       }
-      return true;
-    });
+      return { $gte: todayStr };
+      
+    default:
+      return { $gte: todayStr };
   }
-
-  if (filters.priceFilter === 'free') {
-    results = results.filter(e => e.price === 'Free' || e.source === 'NYC Parks');
-  }
-
-  if (filters.category || filters.searchTerm) {
-    const cat = (filters.category || '').toLowerCase();
-    const term = (filters.searchTerm || '').toLowerCase();
-
-    results = results.filter(event => {
-      const eventType = (event.event_type || '').toLowerCase();
-      const eventName = (event.event_name || '').toLowerCase();
-      const eventLocation = (event.event_location || '').toLowerCase();
-
-      return (cat && eventType.includes(cat)) ||
-             (term && (eventType.includes(term) || eventName.includes(term) || eventLocation.includes(term)));
-    });
-  }
-
-  if (filters.borough) {
-    results = results.filter(e => (e.event_borough || '').toLowerCase() === filters.borough.toLowerCase());
-  }
-
-  return results;
 }
 
+/* =====================
+   MONGODB QUERY
+===================== */
 
-// Main search function
+async function searchEventsDB(filters, limit = 20) {
+  const collection = await connectToEvents();
+  if (!collection) return [];
+
+  const query = { isActive: true };
+
+  // 1. DATE FILTER (from Gemini)
+  query.date = buildDateQuery(filters.date);
+  console.log(`[EVENTS DB] Date filter:`, JSON.stringify(query.date));
+
+  // 2. PRICE FILTER (from Gemini)
+  if (filters.price === 'free') {
+    query.price = 'Free';
+  }
+
+  // 2b. BOROUGH FILTER
+  if (filters.borough && filters.borough !== 'Any' && filters.borough !== 'Anywhere') {
+    query.location = { $regex: new RegExp(filters.borough, 'i') };
+  }
+
+  // 3. CATEGORY/SEARCH TERM (from Gemini)
+  const { loadEventCategories } = require('./query_router');
+  const categoryKeywordsMap = loadEventCategories();
+
+  try {
+    let results = [];
+    const searchTerm = filters.searchTerm;
+    const category = filters.category;
+
+    console.log(`[EVENTS DB] Searching - term: "${searchTerm}", category: "${category}"`);
+
+    // PRIMARY: Search by the specific search term
+    if (searchTerm) {
+      // Try text search first
+      results = await collection.find({
+        ...query,
+        $text: { $search: searchTerm }
+      })
+      .sort({ date: 1 })
+      .limit(limit)
+      .toArray();
+      
+      // Fallback to regex if text search returns nothing
+      if (results.length === 0) {
+        // Flexible regex: handle plurals (festivals -> festival) 
+        // by matching the stem of the word
+        const stem = (searchTerm.toLowerCase().endsWith('s') && searchTerm.length > 3)
+          ? searchTerm.substring(0, searchTerm.length - 1)
+          : searchTerm;
+        const flexibleRegex = new RegExp(stem, 'i');
+
+        console.log(`[EVENTS DB] Trying flexible regex for "${stem}"`);
+        results = await collection.find({
+          ...query,
+          $or: [
+            { name: { $regex: flexibleRegex } },
+            { description: { $regex: flexibleRegex } }
+          ]
+        })
+        .sort({ date: 1 })
+        .limit(limit)
+        .toArray();
+      }
+      
+      console.log(`[EVENTS DB] Search term "${searchTerm}" found ${results.length} events`);
+    }
+    
+    // FALLBACK: If no results from search term, try category keywords
+    if (results.length === 0 && category) {
+      let keywords = categoryKeywordsMap[category];
+      
+      // If the category returned by Gemini isn't in our map, 
+      // treat the category name itself as a search keyword
+      if (!keywords) {
+        console.log(`[EVENTS DB] Category "${category}" not in map, using as keyword`);
+        keywords = [category];
+      } else {
+        console.log(`[EVENTS DB] Fallback to category "${category}" keywords: ${keywords.slice(0, 5).join(', ')}...`);
+      }
+      
+      const orConditions = keywords.flatMap(term => [
+        { name: { $regex: new RegExp(term, 'i') } },
+        { description: { $regex: new RegExp(term, 'i') } }
+      ]);
+      
+      results = await collection.find({
+        ...query,
+        $or: orConditions
+      })
+      .sort({ date: 1 })
+      .limit(limit)
+      .toArray();
+      
+      console.log(`[EVENTS DB] Category fallback found ${results.length} events`);
+    }
+    
+    // FINAL FALLBACK: If still nothing, return any events matching date/price
+    if (results.length === 0) {
+      console.log(`[EVENTS DB] No matches, returning general events`);
+      results = await collection.find(query)
+        .sort({ date: 1 })
+        .limit(limit)
+        .toArray();
+    }
+
+    console.log(`[EVENTS DB] Final: ${results.length} events`);
+    return results.map(mapEventToFormat);
+    
+  } catch (err) {
+    console.error('MongoDB event search failed:', err.message);
+    return [];
+  }
+}
+
+/* =====================
+   MAIN SEARCH FUNCTION
+===================== */
+
 async function searchEvents(userId, query, context = null) {
-  const filters = extractEventFiltersHeuristic(query);
+  // 1. Get NEW filters from Gemini (passed via context.eventFilters)
+  const newFilters = context?.eventFilters || {};
+  const filters = { ...newFilters };
+  
+  // 2. Detect if this is a completely new search topic
+  const isFreshSearch = !!(newFilters.searchTerm || newFilters.category);
+  const isDifferentTopic = isFreshSearch && 
+    (newFilters.searchTerm !== context?.lastFilters?.searchTerm ||
+     newFilters.category !== context?.lastFilters?.category);
+  
+  // 3. Merge with lastFilters ONLY if same topic (for continuation)
+  if (context?.lastFilters && !isDifferentTopic) {
+    for (const [key, value] of Object.entries(context.lastFilters)) {
+      // Never override new values
+      if (filters[key] === undefined || filters[key] === null) {
+        filters[key] = value;
+      }
+    }
+  }
+  
+  // 4. If different topic, start fresh - clear shown history
+  if (isDifferentTopic) {
+    console.log(`[EVENTS] New search topic "${newFilters.searchTerm || newFilters.category}", starting fresh`);
+    if (context) {
+      context.shownEventIds = [];
+    }
+  }
+
+  // Support both 'price' and 'priceFilter' naming
+  if (filters.priceFilter && !filters.price) {
+    filters.price = filters.priceFilter;
+  }
+
+  console.log(`[EVENTS] Searching for: "${query}"`);
+  console.log(`[EVENTS] Filters used:`, JSON.stringify(filters, null, 2));
   
   // Check for follow-up
   const lowerQuery = query.toLowerCase();
   const followUpPatterns = ['more', 'other', 'different', 'another', 'next'];
   const isFollowUp = followUpPatterns.some(p => lowerQuery.includes(p)) && lowerQuery.split(' ').length <= 5;
   
-  if (isFollowUp && context?.lastFilters && context?.lastCategory === 'EVENT') {
-    Object.assign(filters, context.lastFilters);
-  }
-
-  // Check if query is too vague
-  const needsConstraints = isVagueEventQuery(query, filters);
-  if (needsConstraints && !isFollowUp) {
-    return {
-      query,
-      filters,
-      results: [],
-      count: 0,
-      needsConstraints: true,
-      constraintQuestion: {
-        text: "Quick question to find the best events:",
+  // --- CONSTRAINT GATE ---
+  // If this is a fresh search (not a follow-up), check what info we're missing
+  if (!isFollowUp) {
+    // 1. Check for missing category/search term
+    if (!filters.category && !filters.searchTerm) {
+      console.log(`[EVENTS] Missing category/searchTerm, asking...`);
+      return {
+        query, filters, results: [], count: 0, needsConstraints: true,
+        constraintType: 'event_category',
+        question: "What kind of events are you looking for?",
         replies: [
-          { title: "Free 🆓", payload: "EVENT_FREE" },
-          { title: "Under $30 💵", payload: "EVENT_BUDGET" },
-          { title: "Any price 🤷", payload: "EVENT_ANY_PRICE" }
+          { title: '🎵 Music', payload: 'EVENT_CAT_music' },
+          { title: '🎭 Theater', payload: 'EVENT_CAT_theater' },
+          { title: '🏀 Sports', payload: 'EVENT_CAT_sports' },
+          { title: '🎨 Art', payload: 'EVENT_CAT_art' },
+          { title: '🥳 Party', payload: 'EVENT_CAT_nightlife' },
+          { title: '🛒 Markets', payload: 'EVENT_CAT_market' }
         ]
-      }
-    };
+      };
+    }
+
+    // 2. Check for missing date (only if this is a fresh search OR we don't have date from prior)
+    if (!filters.date && (isFreshSearch || !context?.lastFilters?.date)) {
+      console.log(`[EVENTS] Missing date, asking...`);
+      return {
+        query, filters, results: [], count: 0, needsConstraints: true,
+        constraintType: 'event_date',
+        question: `When are you looking for ${filters.searchTerm || filters.category || ''} events?`,
+        replies: [
+          { title: 'Today 📅', payload: 'EVENT_DATE_today' },
+          { title: 'Tomorrow 🌅', payload: 'EVENT_DATE_tomorrow' },
+          { title: 'This Weekend ✨', payload: 'EVENT_DATE_weekend' },
+          { title: 'This Week 🗓️', payload: 'EVENT_DATE_this_week' },
+          { title: 'Anytime 🕒', payload: 'EVENT_DATE_any' }
+        ]
+      };
+    }
   }
 
-  const events = await fetchAllEvents();
-  let results = applyFilters(events, filters);
+  // Search events with filters
+  let results = await searchEventsDB(filters, 20);
 
   // Exclude already shown events
   const shownIds = context?.shownEventIds || [];
@@ -300,11 +395,11 @@ async function searchEvents(userId, query, context = null) {
   // Limit to 5 results
   results = results.slice(0, 5);
 
-  console.log(`Event search complete. Found ${results.length} events`);
+  console.log(`[EVENTS] Returning ${results.length} events`);
 
   // Fallback to web search if no results
   if (results.length === 0 && GEMINI_API_KEY) {
-    const webResults = await searchEventsWithGeminiWebSearch(userId, query, filters);
+    const webResults = await searchEventsWithWebSearch(userId, query, filters);
     if (webResults) {
       return { query, filters, results: [], count: 0, webSearchResponse: webResults };
     }
@@ -313,24 +408,43 @@ async function searchEvents(userId, query, context = null) {
   return { query, filters, results, count: results.length, needsConstraints: false };
 }
 
-// Gemini web search fallback
-async function searchEventsWithGeminiWebSearch(userId, query, filters) {
+/* =====================
+   WEB SEARCH FALLBACK
+===================== */
+
+async function searchEventsWithWebSearch(userId, query, filters) {
   const { checkAndIncrementSearch } = require('./rate_limiter');
 
   if (!GEMINI_API_KEY || !await checkAndIncrementSearch(userId)) return null;
 
   try {
     const today = new Date().toISOString().split('T')[0];
-    const prompt = `Find 5 UPCOMING NYC events matching: "${query}"
+    
+    let dateHint = '';
+    if (filters.date?.type) {
+      dateHint = ` (${filters.date.type.replace('_', ' ')})`;
+    }
+    
+    let priceHint = '';
+    if (filters.price === 'free') {
+      priceHint = ' free';
+    }
+
+    const prompt = `Find 5 UPCOMING${priceHint} NYC events matching: "${query}"${dateHint}
 Today: ${today}. Only include events on or after today.
-Format each as: Event Name | Date | Venue | Price | Source`;
+Format each as:
+1. Event Name
+🕓 Date and time
+📍 Venue
+💰 Price
+🔗 Link or source`;
 
     const response = await geminiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 800, temperature: 0.1 }
+        generationConfig: { maxOutputTokens: 1000, temperature: 0.1 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
@@ -348,23 +462,19 @@ Format each as: Event Name | Date | Venue | Price | Source`;
   }
 }
 
-// Format event results (premium IG DM format)
-function formatEventResults(searchResult) {
-  if (searchResult.needsConstraints) {
-    return {
-      text: searchResult.constraintQuestion.text,
-      replies: searchResult.constraintQuestion.replies,
-      isQuestion: true
-    };
-  }
+/* =====================
+   FORMAT RESULTS
+===================== */
 
+function formatEventResults(searchResult) {
   if (searchResult.webSearchResponse) {
     return { text: searchResult.webSearchResponse, isQuestion: false };
   }
 
   if (searchResult.count === 0) {
+    const searchTerm = searchResult.filters?.searchTerm || 'that';
     return { 
-      text: "Couldn't find events matching that. Try a different date or category?",
+      text: `Couldn't find ${searchTerm} events in our database. Try a different date or category?`,
       isQuestion: false
     };
   }
@@ -377,20 +487,20 @@ function formatEventResults(searchResult) {
     const date = e.start_date_time ? formatEventDate(e.start_date_time) : 'TBD';
     const location = e.event_location || e.event_borough || 'NYC';
     const price = e.price || 'Check source';
-    const category = e.event_type || '';
-    const source = e.source || '';
+    const description = e.event_type || '';
+    const link = e.link || '';
 
     response += `${i + 1}. ${name}\n`;
     response += `🕓 ${date}\n`;
     response += `📍 ${location.length > 40 ? location.substring(0, 37) + '...' : location}\n`;
     response += `💰 ${price}\n`;
     
-    if (category) {
-      response += `🏷️ ${category}\n`;
+    if (description && description.length < 100) {
+      response += `🏷️ ${description.substring(0, 60)}${description.length > 60 ? '...' : ''}\n`;
     }
     
-    if (source) {
-      response += `📌 Source: ${source}\n`;
+    if (link) {
+      response += `🔗 ${link}\n`;
     }
 
     response += '\n';
@@ -401,7 +511,6 @@ function formatEventResults(searchResult) {
   return { text: response.trim(), isQuestion: false };
 }
 
-// Format event date nicely
 function formatEventDate(dateTimeStr) {
   try {
     const date = new Date(dateTimeStr);
@@ -410,13 +519,17 @@ function formatEventDate(dateTimeStr) {
     const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     return `${dateStr} · ${timeStr}`;
   } catch {
-    return dateTimeStr.split('T')[0];
+    return dateTimeStr?.split('T')[0] || 'TBD';
   }
 }
+
+/* =====================
+   EXPORTS
+===================== */
 
 module.exports = {
   fetchAllEvents,
   searchEvents,
-  formatEventResults,
-  extractEventFiltersHeuristic
+  searchEventsDB,
+  formatEventResults
 };

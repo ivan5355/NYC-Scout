@@ -1,0 +1,29 @@
+name: Sync Events Daily
+
+on:
+  schedule:
+    # Runs at 08:00 UTC (3:00 AM or 4:00 AM EST depending on DST)
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Sync Script
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          # Add other env vars if needed
+        run: npm run sync:events
+

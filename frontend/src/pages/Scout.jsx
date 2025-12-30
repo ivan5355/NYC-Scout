@@ -211,7 +211,7 @@ export default function Scout() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about restaurants or events..."
+              placeholder="Try 'best ramen Manhattan' or 'sushi Brooklyn'..."
               className="flex-1 bg-black border border-white/20 rounded-full px-5 py-3 text-white placeholder-white/40 focus:outline-none focus:border-white/50 transition"
               disabled={isLoading}
             />
