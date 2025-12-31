@@ -509,6 +509,7 @@ Provide 5-7 high-quality results with direct links. If specific matches are few,
 IMPORTANT RULES:
 - DO NOT include Eventbrite events.
 - Return ONLY the list of events. DO NOT include any introductory or concluding text (e.g., "Okay, I will search...", "Here are the results...").
+- START your response directly with "1. [Event Name]".
 - Each event MUST follow this exact format:
 
 [Number]. [Event Name]
@@ -518,7 +519,7 @@ IMPORTANT RULES:
 🔗 [Source Name]: [Direct URL]
 
 Double-check: Are any links "vertexaisearch" or "google.com/search"? If YES, replace them with the actual website URL or remove the event.
-Ensure NO introductory text is present.
+Ensure NO introductory text is present. Avoid phrases like "I found these events" or "I will search for you".
 Reply with "Say 'more' for other options." at the end.`;
 
     const response = await geminiClient.post(
@@ -544,6 +545,10 @@ Reply with "Say 'more' for other options." at the end.`;
     const firstEventIndex = cleanedText.search(/\d+\.\s/);
     if (firstEventIndex > 0) {
       cleanedText = cleanedText.substring(firstEventIndex).trim();
+    } else if (firstEventIndex === -1) {
+      // If NO numbered list was found, the model likely returned ONLY conversational filler
+      console.log('[EVENTS] No numbered list found in Gemini response, treating as failure.');
+      return null;
     }
 
     // Programmatic cleanup: remove any Google Search / Vertex AI redirect links that leaked through
