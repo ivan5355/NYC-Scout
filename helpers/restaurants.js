@@ -233,7 +233,7 @@ async function searchRestaurantsWeb(intent, shownKeys = []) {
   
   const exclude = shownKeys.length ? `Exclude: ${shownKeys.map(k => k.split('|')[0]).join(', ')}` : '';
   const synonyms = await getDishSynonyms(intent.dish_or_cuisine);
-  const area = intent.borough && intent.borough !== 'Any' ? `in ${intent.borough}` : 'in NYC';
+  const area = (intent.borough && !['any', 'Any', 'Anywhere'].includes(intent.borough)) ? `in ${intent.borough}` : 'in NYC';
 
   const prompt = `Find 5-8 NYC restaurants for "${intent.dish_or_cuisine || intent.query}" ${area}.
 
@@ -368,7 +368,7 @@ async function searchRestaurantsDB(filters, limit = 20) {
     query.cuisineDescription = { $regex: new RegExp(filters.cuisine, 'i') };
   }
   
-  if (filters.borough && filters.borough !== 'Any' && filters.borough !== 'Anywhere') {
+  if (filters.borough && !['any', 'Any', 'Anywhere'].includes(filters.borough)) {
     // Search for borough name in fullAddress
     query.fullAddress = { $regex: new RegExp(filters.borough, 'i') };
   }

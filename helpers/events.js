@@ -129,12 +129,13 @@ function buildDateQuery(dateFilter) {
       return { $gte: todayStr };
 
     case 'today':
-      return todayStr;
+      return { $regex: new RegExp(`^${todayStr}`) };
       
     case 'tomorrow': {
       const tomorrow = new Date(today);
       tomorrow.setDate(today.getDate() + 1);
-      return tomorrow.toISOString().split('T')[0];
+      const tomorrowStr = tomorrow.toISOString().split('T')[0];
+      return { $regex: new RegExp(`^${tomorrowStr}`) };
     }
     
     case 'weekend': {
@@ -203,7 +204,7 @@ async function searchEventsDB(filters, limit = 20) {
   }
 
   // 2b. BOROUGH FILTER
-  if (filters.borough && filters.borough !== 'Any' && filters.borough !== 'Anywhere') {
+  if (filters.borough && !['any', 'Any', 'Anywhere', 'Anywhere 🌍'].includes(filters.borough)) {
     query.location = { $regex: new RegExp(filters.borough, 'i') };
   }
 
@@ -220,42 +221,50 @@ async function searchEventsDB(filters, limit = 20) {
 
     // PRIMARY: Search by the specific search term
     if (searchTerm) {
-      // Try text search first
-      results = await collection.find({
-        ...query,
-        $text: { $search: searchTerm }
-      })
-      .sort({ date: 1 })
-      .limit(limit)
-      .toArray();
+      // Clean the search term: remove generic words like "show", "event" that cause false positives
+      const genericWords = /\b(shows?|events?|things?|to do|activities|nyc|in|the|a|an)\b/gi;
+      const cleanTerm = searchTerm.replace(genericWords, '').replace(/\s+/g, ' ').trim();
       
-      // Fallback to regex if text search returns nothing
-      if (results.length === 0) {
-        // Flexible regex: handle plurals (festivals -> festival) 
-        // by matching the stem of the word
-        const stem = (searchTerm.toLowerCase().endsWith('s') && searchTerm.length > 3)
-          ? searchTerm.substring(0, searchTerm.length - 1)
-          : searchTerm;
-        const flexibleRegex = new RegExp(stem, 'i');
-
-        console.log(`[EVENTS DB] Trying flexible regex for "${stem}"`);
-        results = await collection.find({
+      console.log(`[EVENTS DB] Cleaned search term: "${cleanTerm}"`);
+      
+      if (cleanTerm && cleanTerm.length >= 2) {
+        // Try text search with the cleaned term
+        const textResults = await collection.find({
           ...query,
-          $or: [
-            { name: { $regex: flexibleRegex } },
-            { description: { $regex: flexibleRegex } }
-          ]
+          $text: { $search: cleanTerm }
         })
         .sort({ date: 1 })
         .limit(limit)
         .toArray();
+        
+        results = [...textResults];
+        
+        // Fallback to regex if text search returns few results
+        if (results.length < 5) {
+          const flexibleRegex = new RegExp(cleanTerm, 'i');
+
+          console.log(`[EVENTS DB] Trying regex for "${cleanTerm}"`);
+          const regexResults = await collection.find({
+            ...query,
+            $or: [
+              { name: { $regex: flexibleRegex } },
+              { description: { $regex: flexibleRegex } }
+            ],
+            _id: { $nin: results.map(r => r._id) }
+          })
+          .sort({ date: 1 })
+          .limit(limit - results.length)
+          .toArray();
+          
+          results = [...results, ...regexResults];
+        }
+        
+        console.log(`[EVENTS DB] Search term "${cleanTerm}" found ${results.length} events`);
       }
-      
-      console.log(`[EVENTS DB] Search term "${searchTerm}" found ${results.length} events`);
     }
     
-    // FALLBACK: If no results from search term, try category keywords
-    if (results.length === 0 && category) {
+    // FALLBACK/SUPPLEMENT: If few results from search term, try category keywords
+    if (results.length < 5 && category) {
       let keywords = categoryKeywordsMap[category];
       
       // If the category returned by Gemini isn't in our map, 
@@ -264,7 +273,7 @@ async function searchEventsDB(filters, limit = 20) {
         console.log(`[EVENTS DB] Category "${category}" not in map, using as keyword`);
         keywords = [category];
       } else {
-        console.log(`[EVENTS DB] Fallback to category "${category}" keywords: ${keywords.slice(0, 5).join(', ')}...`);
+        console.log(`[EVENTS DB] Supplementing with category "${category}" keywords`);
       }
       
       const orConditions = keywords.flatMap(term => [
@@ -272,26 +281,23 @@ async function searchEventsDB(filters, limit = 20) {
         { description: { $regex: new RegExp(term, 'i') } }
       ]);
       
-      results = await collection.find({
+      const catResults = await collection.find({
         ...query,
-        $or: orConditions
+        $or: orConditions,
+        _id: { $nin: results.map(r => r._id) } // Don't duplicate
       })
       .sort({ date: 1 })
-      .limit(limit)
+      .limit(limit - results.length)
       .toArray();
       
-      console.log(`[EVENTS DB] Category fallback found ${results.length} events`);
+      results = [...results, ...catResults];
+      
+      console.log(`[EVENTS DB] After category supplement: ${results.length} events`);
     }
     
-    // FINAL FALLBACK: If still nothing, return any events matching date/price
-    if (results.length === 0) {
-      console.log(`[EVENTS DB] No matches, returning general events`);
-      results = await collection.find(query)
-        .sort({ date: 1 })
-        .limit(limit)
-        .toArray();
-    }
-
+    // NO GENERAL FALLBACK: If we found nothing relevant, don't add random events.
+    // This prevents "Art Show" appearing for "Comedy Show" - better to go to web search.
+    
     console.log(`[EVENTS DB] Final: ${results.length} events`);
     return results.map(mapEventToFormat);
     
@@ -423,27 +429,44 @@ async function searchEvents(userId, query, context = null) {
 
   // Search events with filters
   let results = await searchEventsDB(filters, 20);
+  const dbFoundCount = results.length; // Track how many DB actually found
 
-  // Exclude already shown events
+  // Exclude already shown events ONLY if this is a "more/next" follow-up
   const shownIds = context?.shownEventIds || [];
-  if (shownIds.length > 0) {
+  if (isFollowUp && shownIds.length > 0) {
     results = results.filter(e => !shownIds.includes(e.event_id));
   }
 
   // Limit to 5 results
   results = results.slice(0, 5);
 
-  console.log(`[EVENTS] Returning ${results.length} events`);
+  console.log(`[EVENTS] DB found ${dbFoundCount}, after filtering shown: ${results.length}`);
 
-  // Fallback to web search if no results
-  if (results.length === 0 && GEMINI_API_KEY) {
+  // Only fallback to web search if DB truly found nothing (not just filtered out)
+  if (dbFoundCount === 0 && results.length === 0 && GEMINI_API_KEY) {
+    console.log(`[EVENTS] No DB results, falling back to Gemini Web Search...`);
     const webResults = await searchEventsWithWebSearch(userId, query, filters);
     if (webResults) {
-      return { query, filters, results: [], count: 0, webSearchResponse: webResults };
+      return { query, filters, results: [], count: 0, webSearchResponse: webResults, isWebSearch: true };
     }
   }
 
-  return { query, filters, results, count: results.length, needsConstraints: false };
+  // If DB found events but all were filtered out (already shown)
+  if (dbFoundCount > 0 && results.length === 0) {
+    console.log(`[EVENTS] All ${dbFoundCount} DB results were already shown`);
+    return { 
+      query, 
+      filters, 
+      results: [], 
+      count: 0, 
+      needsConstraints: false, 
+      isWebSearch: false,
+      allShown: true,
+      message: `You've seen all the ${filters.searchTerm || filters.category || ''} events I found. Try a different date or category?`
+    };
+  }
+
+  return { query, filters, results, count: results.length, needsConstraints: false, isWebSearch: false };
 }
 
 /* =====================
@@ -471,36 +494,31 @@ async function searchEventsWithWebSearch(userId, query, filters) {
     const prompt = `Find 5-7 UPCOMING${priceHint} NYC events matching: "${query}"${dateHint}.
 Today is ${today}. Only include events on or after today.
 
+CRITICAL LINK REQUIREMENT:
+- You MUST provide the ORIGINAL source URL (, eventbrite.com, timeout.com, nycparks.gov).
+- NEVER use links starting with "https://vertexaisearch.cloud.google.com" or "https://www.google.com/search". These are internal redirect links and do not work for users.
+- If you only have a Google redirect link, keep searching until you find the direct website of the event or the publisher.
+- No direct link = No event.
+
 SEARCH INSTRUCTIONS:
-Search these top NYC event sources for real-time information:
-- Time Out New York (General NYC events)
-- The Skint (Free & cheap events in NYC)
-- Eventbrite NYC (Various concerts, workshops, and gatherings)
-- DoNYC (Music, arts, and nightlife)
-- NYC Parks (Official community events in city parks)
-- BrooklynVegan (Concerts and music news)
-- NYC For Free (Specifically for free events)
-- Secret NYC (Trending activities and hidden gems)
+Search across the entire web for NYC events, prioritizing these top sources:
+- Time Out New York, Gothamist, The Skint, DoNYC, NYC Parks (Official), BrooklynVegan, Secret NYC, Ohmyrockness, Resident Advisor, NYC For Free, NYC Tourism (nyctourism.com), Thrillist NYC, Nifty NYC, Guest of a Guest, PureWow NYC, Mommy Poppins (family/kids), Fever Up, Dice.fm, Bandsintown, Eventful, Patch NYC, and New York Magazine (Vulture).
+Skip Eventbrite as we already have that data in our database.
+Provide 5-7 high-quality results with direct links. If specific matches are few, include popular upcoming NYC events.
 
 IMPORTANT RULES:
-- Ensure the events are actually upcoming (not past).
-- Provide a variety of options if possible.
-- If no specific events match the exact query, suggest the closest upcoming alternatives in the same category.
+- DO NOT include Eventbrite events.
+- Return ONLY the list of events. DO NOT include any introductory or concluding text (e.g., "Okay, I will search...", "Here are the results...").
+- Each event MUST follow this exact format:
 
-Format each result exactly as:
 [Number]. [Event Name]
 🕓 [Date and Time]
 📍 [Venue/Location]
 💰 [Price]
-🔗 [Source Name]: [Link]
+🔗 [Source Name]: [Direct URL]
 
-Example:
-1. Bryant Park Movie Night
-🕓 Monday, June 12 · 8:00 PM
-📍 Bryant Park, Manhattan
-💰 Free
-🔗 Time Out: https://timeout.com/nyc/events/bryant-park-movies
-
+Double-check: Are any links "vertexaisearch" or "google.com/search"? If YES, replace them with the actual website URL or remove the event.
+Ensure NO introductory text is present.
 Reply with "Say 'more' for other options." at the end.`;
 
     const response = await geminiClient.post(
@@ -519,7 +537,35 @@ Reply with "Say 'more' for other options." at the end.`;
       .join('\n')
       .trim();
 
-    return text || null;
+    if (!text) return null;
+
+    // Programmatic cleanup: remove any introductory text before the first event (e.g., "1. Event Name")
+    let cleanedText = text;
+    const firstEventIndex = cleanedText.search(/\d+\.\s/);
+    if (firstEventIndex > 0) {
+      cleanedText = cleanedText.substring(firstEventIndex).trim();
+    }
+
+    // Programmatic cleanup: remove any Google Search / Vertex AI redirect links that leaked through
+    if (cleanedText && (cleanedText.includes('vertexaisearch.cloud.google.com') || cleanedText.includes('google.com/search'))) {
+      console.log('[EVENTS] Detected redirect links, filtering response...');
+      
+      // Split by numbered list (e.g., "1. ", "2. ")
+      const parts = cleanedText.split(/\n(?=\d+\.\s)/);
+      const filteredParts = parts.filter(part => 
+        !part.includes('vertexaisearch.cloud.google.com') && 
+        !part.includes('google.com/search')
+      );
+      
+      if (filteredParts.length === 0) return null;
+      
+      // Re-number and join
+      cleanedText = filteredParts.map((part, i) => {
+        return part.replace(/^\d+\./, `${i + 1}.`);
+      }).join('\n');
+    }
+
+    return cleanedText || null;
   } catch (err) {
     console.error('Gemini web search failed:', err.message);
     return null;
@@ -532,7 +578,18 @@ Reply with "Say 'more' for other options." at the end.`;
 
 function formatEventResults(searchResult) {
   if (searchResult.webSearchResponse) {
-    return { text: searchResult.webSearchResponse, isQuestion: false };
+    return { 
+      text: `🌐 I found these events on the web:\n\n${searchResult.webSearchResponse}`, 
+      isQuestion: false 
+    };
+  }
+
+  // Handle case where all DB results were already shown
+  if (searchResult.allShown) {
+    return {
+      text: searchResult.message || "You've seen all the events I found. Try a different date or category?",
+      isQuestion: false
+    };
   }
 
   if (searchResult.count === 0) {

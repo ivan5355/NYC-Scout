@@ -472,13 +472,13 @@ function parseBoroughFromPayload(payload) {
     'BOROUGH_QUEENS': 'Queens',
     'BOROUGH_BRONX': 'Bronx',
     'BOROUGH_STATEN': 'Staten Island',
-    'BOROUGH_ANY': null,
+    'BOROUGH_ANY': 'any',
     'CONSTRAINT_BOROUGH_MANHATTAN': 'Manhattan',
     'CONSTRAINT_BOROUGH_BROOKLYN': 'Brooklyn',
     'CONSTRAINT_BOROUGH_QUEENS': 'Queens',
     'CONSTRAINT_BOROUGH_BRONX': 'Bronx',
     'CONSTRAINT_BOROUGH_STATEN': 'Staten Island',
-    'CONSTRAINT_BOROUGH_ANYWHERE': null,
+    'CONSTRAINT_BOROUGH_ANYWHERE': 'any',
     'EVENT_BOROUGH_Manhattan': 'Manhattan',
     'EVENT_BOROUGH_Brooklyn': 'Brooklyn',
     'EVENT_BOROUGH_Queens': 'Queens',
@@ -500,7 +500,7 @@ function parseBoroughFromText(text) {
     'queens': 'Queens', 'flushing': 'Queens', 'astoria': 'Queens', 'jackson heights': 'Queens',
     'bronx': 'Bronx',
     'staten island': 'Staten Island', 'staten': 'Staten Island',
-    'anywhere': null, 'any': null, 'all': null
+    'anywhere': 'any', 'any': 'any', 'all': 'any'
   };
   for (const [key, val] of Object.entries(boroughMap)) {
     if (t.includes(key)) return val;
@@ -514,7 +514,7 @@ function parseBudgetFromPayload(payload) {
     'BUDGET_$': '$',
     'BUDGET_$$': '$$',
     'BUDGET_$$$': '$$$',
-    'BUDGET_ANY': null
+    'BUDGET_ANY': 'any'
   };
   return budgetMap[payload];
 }
