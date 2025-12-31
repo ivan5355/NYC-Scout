@@ -460,7 +460,7 @@ async function searchEventsWithWebSearch(userId, query, filters) {
     
     let dateHint = '';
     if (filters.date?.type && filters.date.type !== 'any') {
-      dateHint = ` (${filters.date.type.replace('_', ' ')})`;
+      dateHint = ` for ${filters.date.type.replace('_', ' ')}`;
     }
     
     let priceHint = '';
@@ -468,21 +468,47 @@ async function searchEventsWithWebSearch(userId, query, filters) {
       priceHint = ' free';
     }
 
-    const prompt = `Find 5 UPCOMING${priceHint} NYC events matching: "${query}"${dateHint}
-Today: ${today}. Only include events on or after today.
-Format each as:
-1. Event Name
-🕓 Date and time
-📍 Venue
-💰 Price
-🔗 Source Name: Link`;
+    const prompt = `Find 5-7 UPCOMING${priceHint} NYC events matching: "${query}"${dateHint}.
+Today is ${today}. Only include events on or after today.
+
+SEARCH INSTRUCTIONS:
+Search these top NYC event sources for real-time information:
+- Time Out New York (General NYC events)
+- The Skint (Free & cheap events in NYC)
+- Eventbrite NYC (Various concerts, workshops, and gatherings)
+- DoNYC (Music, arts, and nightlife)
+- NYC Parks (Official community events in city parks)
+- BrooklynVegan (Concerts and music news)
+- NYC For Free (Specifically for free events)
+- Secret NYC (Trending activities and hidden gems)
+
+IMPORTANT RULES:
+- Ensure the events are actually upcoming (not past).
+- Provide a variety of options if possible.
+- If no specific events match the exact query, suggest the closest upcoming alternatives in the same category.
+
+Format each result exactly as:
+[Number]. [Event Name]
+🕓 [Date and Time]
+📍 [Venue/Location]
+💰 [Price]
+🔗 [Source Name]: [Link]
+
+Example:
+1. Bryant Park Movie Night
+🕓 Monday, June 12 · 8:00 PM
+📍 Bryant Park, Manhattan
+💰 Free
+🔗 Time Out: https://timeout.com/nyc/events/bryant-park-movies
+
+Reply with "Say 'more' for other options." at the end.`;
 
     const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
       {
         contents: [{ parts: [{ text: prompt }] }],
         tools: [{ google_search: {} }],
-        generationConfig: { maxOutputTokens: 1000, temperature: 0.1 }
+        generationConfig: { maxOutputTokens: 1500, temperature: 0.2 }
       },
       { params: { key: GEMINI_API_KEY } }
     );

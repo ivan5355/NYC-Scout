@@ -1,4 +1,9 @@
-name: Sync Events Daily
+
+      - name: Run Sync Script
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          # Add other env vars if needed
+      name: Sync Events Daily
 
 on:
   schedule:
@@ -20,10 +25,5 @@ jobs:
 
       - name: Install dependencies
         run: npm install
-
-      - name: Run Sync Script
-        env:
-          MONGO_URI: ${{ secrets.MONGO_URI }}
-          # Add other env vars if needed
-        run: npm run sync:events
+  run: npm run sync:events
 
