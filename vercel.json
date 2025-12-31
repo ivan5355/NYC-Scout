@@ -1,7 +1,5 @@
 {
   "version": 2,
-  "buildCommand": "cd frontend && npm install && npm run build",
-  "outputDirectory": "frontend/dist",
   "builds": [
     {
       "src": "frontend/package.json",
@@ -16,33 +14,12 @@
     }
   ],
   "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "api/api.js"
-    },
-    {
-      "src": "/instagram",
-      "dest": "api/api.js"
-    },
-    {
-      "src": "/privacy-policy",
-      "dest": "api/api.js"
-    },
-    {
-      "src": "/terms-of-service",
-      "dest": "api/api.js"
-    },
-    {
-      "src": "/events/(.*)",
-      "dest": "api/api.js"
-    },
-    {
-      "src": "/(.*\\.(js|css|ico|png|jpg|jpeg|svg|woff|woff2|ttf|eot))",
-      "dest": "frontend/dist/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "frontend/dist/index.html"
-    }
+    { "src": "/api/(.*)", "dest": "/api/api.js" },
+    { "src": "/instagram", "dest": "/api/api.js" },
+    { "src": "/privacy-policy", "dest": "/api/api.js" },
+    { "src": "/terms-of-service", "dest": "/api/api.js" },
+    { "src": "/events/(.*)", "dest": "/api/api.js" },
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/frontend/dist/index.html" }
   ]
 }
