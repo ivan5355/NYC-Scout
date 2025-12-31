@@ -20,6 +20,6 @@
     { "src": "/terms-of-service", "dest": "/api/api.js" },
     { "src": "/events/(.*)", "dest": "/api/api.js" },
     { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/frontend/dist/index.html" }
+    { "src": "/(.*)", "dest": "/frontend/$1" }
   ]
 }
