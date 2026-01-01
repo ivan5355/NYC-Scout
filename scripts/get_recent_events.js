@@ -15,7 +15,13 @@ const cheerio = require("cheerio");
 const pLimit = require("p-limit");
 const { MongoClient } = require("mongodb");
 const path = require("path");
+const https = require("https");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env.local") });
+
+// Create axios instance that bypasses SSL issues for Eventbrite scraping
+const axiosNoSSL = axios.create({
+  httpsAgent: new https.Agent({ rejectUnauthorized: false })
+});
 
 /* =====================
    CONFIG
@@ -129,11 +135,11 @@ async function fetchPermittedEvents() {
   const today = new Date().toISOString().split('T')[0];
   try {
     console.log('Fetching NYC Permitted Events...');
-    const response = await axios.get(NYC_PERMITTED_EVENTS_URL, {
+    const response = await axiosNoSSL.get(NYC_PERMITTED_EVENTS_URL, {
       params: {
         '$where': `start_date_time >= '${today}'`,
         '$order': 'start_date_time',
-        '$limit': 500
+        '$limit': 1000
       },
       timeout: 15000
     });
@@ -178,7 +184,7 @@ async function fetchPermittedEvents() {
 async function fetchParksEvents() {
   try {
     console.log('Fetching NYC Parks Events...');
-    const response = await axios.get(NYC_PARKS_EVENTS_URL, { timeout: 15000 });
+    const response = await axiosNoSSL.get(NYC_PARKS_EVENTS_URL, { timeout: 15000 });
 
     const events = response.data
       .filter(event => {
@@ -287,7 +293,7 @@ async function fetchEventbritePage(page) {
   const url = `${EVENTBRITE_BASE_URL}?page=${page}`;
   try {
     console.log(`Fetching Eventbrite page ${page}...`);
-    const { data } = await axios.get(url, { headers: HEADERS, timeout: 15000 });
+    const { data } = await axiosNoSSL.get(url, { headers: HEADERS, timeout: 15000 });
     const $ = cheerio.load(data);
 
     const events = [];
