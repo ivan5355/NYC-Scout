@@ -7,104 +7,12 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const path = require('path');
-const { MongoClient } = require('mongodb');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
 const { handleDM, processDMForTest } = require('../helpers/message_handler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// MongoDB setup for rate limiting
-const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
-const LIMITS = {
-  GEMINI_REQUESTS: 100,
-  WEB_SEARCHES: 20
-};
-
-let mongoClient = null;
-let limitsCollection = null;
-
-async function connectToMongoDB() {
-  if (limitsCollection) return limitsCollection;
-
-  if (!MONGODB_URI) {
-    console.error('MongoDB URI not found in environment variables');
-    return null;
-  }
-
-  try {
-    mongoClient = new MongoClient(MONGODB_URI);
-    await mongoClient.connect();
-    const db = mongoClient.db('nyc-events');
-    limitsCollection = db.collection('user_limits');
-    console.log('Connected to MongoDB user_limits collection');
-    return limitsCollection;
-  } catch (err) {
-    console.error('Failed to connect to MongoDB:', err.message);
-    return null;
-  }
-}
-
-async function checkAndIncrementGemini(userId) {
-  const collection = await connectToMongoDB();
-  if (!collection) return true;
-
-  const today = new Date().toISOString().split('T')[0];
-
-  try {
-    const userRecord = await collection.findOne({ userId });
-
-    if (!userRecord || userRecord.date !== today) {
-      await collection.updateOne(
-        { userId },
-        { $set: { date: today, gemini: 1, search: 0 } },
-        { upsert: true }
-      );
-      return true;
-    }
-
-    if (userRecord.gemini >= LIMITS.GEMINI_REQUESTS) {
-      return false;
-    }
-
-    await collection.updateOne({ userId }, { $inc: { gemini: 1 } });
-    return true;
-  } catch (err) {
-    console.error('Error checking Gemini rate limit:', err);
-    return true;
-  }
-}
-
-async function checkAndIncrementSearch(userId) {
-  const collection = await connectToMongoDB();
-  if (!collection) return true;
-
-  const today = new Date().toISOString().split('T')[0];
-
-  try {
-    const userRecord = await collection.findOne({ userId });
-
-    if (!userRecord || userRecord.date !== today) {
-      await collection.updateOne(
-        { userId },
-        { $set: { date: today, gemini: 0, search: 1 } },
-        { upsert: true }
-      );
-      return true;
-    }
-
-    if (userRecord.search >= LIMITS.WEB_SEARCHES) {
-      return false;
-    }
-
-    await collection.updateOne({ userId }, { $inc: { search: 1 } });
-    return true;
-  } catch (err) {
-    console.error('Error checking Web Search rate limit:', err);
-    return true;
-  }
-}
 
 // Middleware
 app.use(cors());
@@ -189,21 +97,20 @@ app.get('/api/health', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`
-🗽 NYC Scout API Server
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌐 Server running at: http://localhost:${PORT}
-📩 Instagram webhook: http://localhost:${PORT}/instagram
-💬 Chat endpoint:     POST http://localhost:${PORT}/api/chat
-🧪 Test endpoint:     POST http://localhost:${PORT}/api/test-dm
-❤️ Health check:      http://localhost:${PORT}/api/health
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  `);
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`
+  🗽 NYC Scout API Server
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🌐 Server running at: http://localhost:${PORT}
+  📩 Instagram webhook: http://localhost:${PORT}/instagram
+  💬 Chat endpoint:     POST http://localhost:${PORT}/api/chat
+  🧪 Test endpoint:     POST http://localhost:${PORT}/api/test-dm
+  ❤️ Health check:      http://localhost:${PORT}/api/health
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    `);
+  });
+}
 
-// Export for Vercel serverless (if needed)
-module.exports = {
-  checkAndIncrementGemini,
-  checkAndIncrementSearch
-};
+// Export for Vercel serverless
+module.exports = app;
