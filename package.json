@@ -9,7 +9,9 @@
     "build:frontend": "cd frontend && npm install && npm run build",
     "dev:frontend": "cd frontend && npm run dev",
     "build": "npm run build:frontend",
-    "sync:events": "node scripts/get_recent_events.js"
+    "sync:events": "node scripts/get_recent_events.js",
+    "test": "jest",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "axios": "^1.7.9",
@@ -21,5 +23,9 @@
     "mongodb": "^6.5.0",
     "p-limit": "^3.1.0",
     "rss-parser": "^3.13.0"
+  },
+  "devDependencies": {
+    "fast-check": "^3.23.2",
+    "jest": "^29.7.0"
   }
 }
