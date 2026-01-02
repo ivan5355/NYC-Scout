@@ -45,7 +45,7 @@
    After deployment, go to your Vercel project dashboard → Settings → Environment Variables and add:
    
    - `APP_SECRET` - Found in Settings → Basic of your Facebook app
-   - `TOKEN` - The verify token you generated earlier
+   - `VERIFY_TOKEN` - The verify token you generated earlier (also called `TOKEN` in some contexts)
    - `GEMINI_API_KEY` - Your Google Gemini API key
    - `PAGE_ACCESS_TOKEN` - Get this from Facebook Graph Explorer:
      - Go to [Graph Explorer](https://developers.facebook.com/tools/explorer/)
@@ -53,7 +53,7 @@
      - Add permissions: `pages_show_list`, `pages_manage_metadata`, `pages_messaging`, `instagram_basic`, `instagram_manage_messages`
      - Click "Generate Access Token"
      - Type `me/accounts` and hit submit to get your page access token
-   - `MONGODB_URI` - MongoDB connection string (required for restaurant answers)
+   - `MONGODB_URI` - MongoDB connection string (required for rate limiting and restaurant search)
 
 3. **Update webhook URL** in your Facebook app to point to your new Vercel deployment URL
 
@@ -166,13 +166,54 @@ When local event APIs or the restaurant database return no results, the bot auto
 
 ## File Structure
 
-- **`api/api.js`** - Express server, webhook verification, and route handlers
-- **`helpers/message_handler.js`** - **Central DM processor**: routes messages and handles Instagram messaging
-- **`helpers/query_router.js`** - AI-powered intent classifier (RESTAURANT vs EVENT vs OTHER)
-- **`helpers/events.js`** - Event search with filter extraction and web search fallback
-- **`helpers/restaurants.js`** - MongoDB restaurant search with AI filter extraction
-- **`data/`** - Contains `event_filters.json` and `restaurant_filters.json` 
-- **`scripts/`** - Data extraction scripts for populating/refreshing filters
+- **`api/api.js`** - Express server, webhook verification, and route handlers. Supports both Instagram webhooks and a local chat UI.
+- **`frontend/`** - A React (Vite) based chat interface for testing and interacting with the bot outside of Instagram.
+- **`helpers/message_handler.js`** - **Central DM processor**: routes messages and handles Instagram messaging.
+- **`helpers/query_router.js`** - AI-powered intent classifier (RESTAURANT vs EVENT vs OTHER).
+- **`helpers/events.js`** - Event search with filter extraction and web search fallback.
+- **`helpers/restaurants.js`** - MongoDB restaurant search with AI filter extraction.
+- **`data/`** - Contains `event_categories.json` and other cached filter data.
+- **`scripts/`** - Data extraction and maintenance scripts.
+- **`.github/workflows/`** - Automation for keeping data sources fresh.
+
+## Automated Sync (GitHub Actions)
+
+The project includes a daily automation (`.github/workflows/sync-events.yml`) that:
+1. Runs every day at 08:00 UTC.
+2. Executes `scripts/get_recent_events.js`.
+3. Ensures your local data/cache stays up to date with NYC Open Data sources.
+
+To enable this:
+1. Add `MONGO_URI` to your GitHub Repository Secrets.
+
+## Local Development
+
+### 1. Backend Setup
+```bash
+# Install dependencies
+npm install
+
+# Create .env.local and add your keys
+# See Environment Variables section above
+
+# Run the API server
+npm run dev
+```
+
+### 2. Frontend Setup
+In a new terminal:
+```bash
+# Run the Vite development server
+npm run dev:frontend
+```
+The frontend will be available at `http://localhost:5173` and will proxy requests to the backend at `http://localhost:3000`.
+
+## Maintenance Scripts
+
+- `node scripts/get_recent_events.js`: Primary script to fetch and cache the latest NYC events.
+- `node scripts/extract_restaurant_filters.js`: Scans restaurant data to find all cuisines and boroughs.
+- `node scripts/extract_event_categories.js`: Scans NYC Open Data to find active event categories and boroughs.
+- `node scripts/check_event_count.js`: Quick check of how many events are currently cached.
 
 ## Message Processing Flow
 
