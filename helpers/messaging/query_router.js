@@ -474,18 +474,42 @@ function generateFilterPrompt(type, detectedFilters, missingFilters) {
 }
 
 function generateEventFilterPrompt(detectedFilters, missingFilters) {
-  const searchDesc = detectedFilters.searchTerm || detectedFilters.category || 'events';
+  const searchTerm = detectedFilters.searchTerm || detectedFilters.category;
 
   // Build summary of what we already know
   let knownParts = [];
   if (detectedFilters.searchTerm) knownParts.push(`"${detectedFilters.searchTerm}"`);
+  else if (detectedFilters.category) knownParts.push(detectedFilters.category);
   if (detectedFilters.date) knownParts.push(detectedFilters.date);
   if (detectedFilters.borough) knownParts.push(detectedFilters.borough);
   if (detectedFilters.price === 'free') knownParts.push('free');
 
-  const summary = knownParts.length > 0 ? `Got it — ${knownParts.join(', ')}! ` : '';
+  // If we have a search term, acknowledge it and ask only for missing filters
+  if (searchTerm && missingFilters.length > 0) {
+    const summary = `🎪 ${searchTerm}! `;
+    
+    // Build a focused prompt for just the missing filters
+    let missingPrompts = [];
+    if (missingFilters.includes('date') && !detectedFilters.date) {
+      missingPrompts.push('📅 When? (tonight, this weekend, next week...)');
+    }
+    if (missingFilters.includes('borough') && !detectedFilters.borough) {
+      missingPrompts.push('📍 Where? (Manhattan, Brooklyn, Queens...)');
+    }
+    if (missingFilters.includes('price') && !detectedFilters.price) {
+      missingPrompts.push('💰 Budget? (free, any)');
+    }
 
-  // ONE prompt asking for ALL filters at once
+    if (missingPrompts.length > 0) {
+      return {
+        text: `${summary}\n\n${missingPrompts.join('\n')}\n\nExample: "Brooklyn this weekend" or "free tonight"`,
+        buttons: null,
+        type: 'event_filter_request'
+      };
+    }
+  }
+
+  // No search term yet - ask for everything
   const eventFullPrompt = `🎪 NYC has hundreds of events!
 
 Tell me what you're looking for in one message:
@@ -498,23 +522,49 @@ Tell me what you're looking for in one message:
 Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
 
   return {
-    text: `${summary}${eventFullPrompt}`,
+    text: eventFullPrompt,
     buttons: null,
     type: 'event_filter_request'
   };
 }
 
 function generateRestaurantFilterPrompt(detectedFilters, missingFilters) {
+  const cuisine = detectedFilters.cuisine || detectedFilters.dish;
+
   // Build summary of what we already know
   let knownParts = [];
   if (detectedFilters.cuisine) knownParts.push(detectedFilters.cuisine);
   if (detectedFilters.dish) knownParts.push(detectedFilters.dish);
   if (detectedFilters.borough) knownParts.push(detectedFilters.borough);
   if (detectedFilters.budget) knownParts.push(detectedFilters.budget);
+  if (detectedFilters.vibe) knownParts.push(detectedFilters.vibe);
 
-  const summary = knownParts.length > 0 ? `Got it — ${knownParts.join(', ')}! ` : '';
+  // If we have a cuisine/dish, acknowledge it and ask only for missing filters
+  if (cuisine && missingFilters.length > 0) {
+    const summary = `🍜 ${cuisine}! `;
+    
+    // Build a focused prompt for just the missing filters
+    let missingPrompts = [];
+    if (missingFilters.includes('borough') && !detectedFilters.borough) {
+      missingPrompts.push('📍 Where? (Manhattan, Brooklyn, Queens...)');
+    }
+    if (missingFilters.includes('budget') && !detectedFilters.budget) {
+      missingPrompts.push('💰 Budget? (cheap, moderate, fancy)');
+    }
+    if (missingFilters.includes('vibe') && !detectedFilters.vibe) {
+      missingPrompts.push('✨ Vibe? (casual, date night, trendy, hidden gem)');
+    }
 
-  // ONE prompt asking for ALL filters at once
+    if (missingPrompts.length > 0) {
+      return {
+        text: `${summary}\n\n${missingPrompts.join('\n')}\n\nExample: "Brooklyn, cheap" or "Manhattan date night"`,
+        buttons: null,
+        type: 'restaurant_filter_request'
+      };
+    }
+  }
+
+  // No cuisine yet - ask for everything
   const restaurantFullPrompt = `🍽️ NYC has thousands of restaurants!
 
 Tell me what you're looking for in one message:
@@ -527,7 +577,7 @@ Tell me what you're looking for in one message:
 Example: "cheap sushi in Manhattan" or "trendy Italian date spot in Brooklyn"`;
 
   return {
-    text: `${summary}${restaurantFullPrompt}`,
+    text: restaurantFullPrompt,
     buttons: null,
     type: 'restaurant_filter_request'
   };
