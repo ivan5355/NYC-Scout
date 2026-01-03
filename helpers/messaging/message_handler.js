@@ -214,29 +214,11 @@ async function processDM(senderId, messageText, payload, profile, context) {
 
   if (isGreeting) {
     const welcome = "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?";
-    const quickReplies = [
-      { title: "Get Started 🚀", payload: 'ACCEPT_WELCOME' }
-    ];
-    await sendMessage(senderId, welcome, quickReplies);
+    await sendMessage(senderId, welcome);
     return;
   }
 
-  // Handle Accept button click
-  if (payload === 'ACCEPT_WELCOME') {
-    const menu = "Great! What are we looking for today?";
-    const quickReplies = [
-      { title: '🍽️ Food', payload: 'MODE_FOOD' },
-      { title: '🎉 Events', payload: 'MODE_EVENTS' },
-      { title: '👥 Find people to go with', payload: 'MODE_SOCIAL' }
-    ];
-    await sendMessage(senderId, menu, quickReplies);
-    return;
-  }
-
-  const quickReplies = [
-    { title: "Get Started 🚀", payload: 'ACCEPT_WELCOME' }
-  ];
-  await sendMessage(senderId, "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?", quickReplies);
+  await sendMessage(senderId, "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?");
 }
 
 /* =====================
@@ -365,18 +347,6 @@ async function processDMForTest(senderId, messageText, payload = null) {
   const modeResult = await handleModeSelection(senderId, payload, true);
   if (modeResult) return modeResult;
 
-  if (payload === 'ACCEPT_WELCOME') {
-    return {
-      reply: "Great! What are we looking for today?",
-      buttons: [
-        { title: '🍽️ Food', payload: 'MODE_FOOD' },
-        { title: '🎉 Events', payload: 'MODE_EVENTS' },
-        { title: '👥 Find people to go with', payload: 'MODE_SOCIAL' }
-      ],
-      category: 'OTHER'
-    };
-  }
-
   if (context?.pendingType === 'restaurant_gate' && messageText && !payload) {
     const textBorough = parseBoroughFromText(messageText);
     if (textBorough !== undefined) {
@@ -388,9 +358,6 @@ async function processDMForTest(senderId, messageText, payload = null) {
 
   return {
     reply: "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?",
-    buttons: [
-      { title: "Get Started 🚀", payload: 'ACCEPT_WELCOME' }
-    ],
     category: 'OTHER'
   };
 }
