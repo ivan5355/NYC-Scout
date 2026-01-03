@@ -11,9 +11,8 @@ export default function Scout() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [currentButtons, setCurrentButtons] = useState(null);
   const [initialized, setInitialized] = useState(false);
-  
+
   const messagesEndRef = useRef(null);
   const API_URL = '/api/chat';
 
@@ -35,19 +34,15 @@ export default function Scout() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: 'hi', userId })
       });
-      
+
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      
+
       setMessages([{
         type: 'assistant',
         content: data.reply,
         category: data.category
       }]);
-      
-      if (data.buttons) {
-        setCurrentButtons(data.buttons);
-      }
     } catch (err) {
       console.error('Init error:', err);
       setMessages([{
@@ -58,42 +53,28 @@ export default function Scout() {
     setIsLoading(false);
   };
 
-  const sendMessage = async (text, payload = null) => {
-    if (!text && !payload) return;
-    
+  const sendMessage = async (text) => {
+    if (!text) return;
+
     setIsLoading(true);
-    setCurrentButtons(null);
-    
-    if (text) {
-      setMessages(prev => [...prev, { type: 'user', content: text }]);
-    }
-    if (payload) {
-      const btn = currentButtons?.find(b => b.payload === payload);
-      if (btn) {
-        setMessages(prev => [...prev, { type: 'user', content: btn.title }]);
-      }
-    }
-    
+    setMessages(prev => [...prev, { type: 'user', content: text }]);
+
     try {
       const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, userId, payload })
+        body: JSON.stringify({ message: text, userId })
       });
-      
+
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      
+
       setMessages(prev => [...prev, {
         type: 'assistant',
         content: data.reply,
         category: data.category
       }]);
-      
-      if (data.buttons) {
-        setCurrentButtons(data.buttons);
-      }
-      
+
     } catch (err) {
       console.error('Chat error:', err);
       setMessages(prev => [...prev, {
@@ -101,7 +82,7 @@ export default function Scout() {
         content: 'Something went wrong. Make sure the backend is running.'
       }]);
     }
-    
+
     setIsLoading(false);
   };
 
@@ -110,16 +91,6 @@ export default function Scout() {
     if (!input.trim() || isLoading) return;
     sendMessage(input.trim());
     setInput('');
-  };
-
-  const handleButtonClick = (payload) => {
-    if (isLoading) return;
-    sendMessage(null, payload);
-  };
-
-  const resetUser = () => {
-    localStorage.removeItem('nyc_scout_user_id');
-    window.location.reload();
   };
 
   return (
@@ -136,18 +107,12 @@ export default function Scout() {
               <p className="text-xs text-white/50">Food & events guide</p>
             </div>
           </div>
-          <button 
-            onClick={resetUser}
-            className="text-xs text-white/40 border border-white/20 px-3 py-1 rounded hover:bg-white/10"
-          >
-            Reset User
-          </button>
         </div>
       </header>
 
 
       {/* Main Chat Area */}
-      <main className="max-w-4xl mx-auto px-4 py-6 pb-40">
+      <main className="max-w-4xl mx-auto px-4 py-6 pb-32">
         {/* Messages */}
         <div className="space-y-4">
           {messages.map((msg, i) => (
@@ -156,17 +121,16 @@ export default function Scout() {
               className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 ${
-                  msg.type === 'user'
-                    ? 'bg-white text-black'
-                    : 'bg-white/10 text-white'
-                }`}
+                className={`max-w-[85%] rounded-2xl px-4 py-3 ${msg.type === 'user'
+                  ? 'bg-white text-black'
+                  : 'bg-white/10 text-white'
+                  }`}
               >
                 <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
               </div>
             </div>
           ))}
-          
+
           {isLoading && (
             <div className="flex justify-start">
               <div className="bg-white/10 rounded-2xl px-4 py-3">
@@ -178,30 +142,10 @@ export default function Scout() {
               </div>
             </div>
           )}
-          
+
           <div ref={messagesEndRef} />
         </div>
       </main>
-
-      {/* Quick Reply Buttons */}
-      {currentButtons && currentButtons.length > 0 && (
-        <div className="fixed bottom-20 left-0 right-0 bg-black/90 border-t border-white/10 px-4 py-3">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex flex-wrap gap-2 justify-center">
-              {currentButtons.map((btn, i) => (
-                <button
-                  key={i}
-                  onClick={() => handleButtonClick(btn.payload)}
-                  disabled={isLoading}
-                  className="px-3 py-2 bg-black border border-white/30 rounded-full text-sm hover:bg-white/10 transition disabled:opacity-50"
-                >
-                  {btn.title}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Input Area */}
       <div className="fixed bottom-0 left-0 right-0 bg-black border-t border-white/10">
@@ -215,13 +159,6 @@ export default function Scout() {
               className="flex-1 bg-black border border-white/20 rounded-full px-5 py-3 text-white placeholder-white/40 focus:outline-none focus:border-white/50 transition"
               disabled={isLoading}
             />
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              className="px-6 py-3 bg-white text-black rounded-full font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/90 transition"
-            >
-              Send
-            </button>
           </div>
         </form>
       </div>

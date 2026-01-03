@@ -353,120 +353,15 @@ async function searchEvents(userId, query, context = null) {
   const followUpPatterns = ['more', 'other', 'different', 'another', 'next'];
   const isFollowUp = followUpPatterns.some(p => lowerQuery.includes(p)) && lowerQuery.split(' ').length <= 5;
 
-  // --- CONSTRAINT GATE ---
-  // If this is a fresh search (not a follow-up), check what info we're missing
-  if (!isFollowUp) {
-    console.log(`[EVENTS] Constraint Check - SearchTerm: ${!!filters.searchTerm}, Category: ${!!filters.category}, Date: ${!!filters.date}, Price: ${filters.price}`);
-
-    // 1. Check for missing category/search term - use conversational prompt
-    if (!filters.category && !filters.searchTerm) {
-      console.log(`[EVENTS] Missing category/searchTerm, asking with friendly prompt...`);
-
-      const question = `🎉 Events! NYC has 200+ happening this week.
-
-Tell me what you're looking for:
-
-🎭 Type (music, comedy, art, sports, theater...)
-📍 Location (Manhattan, Brooklyn, Queens...)
-📅 When (tonight, this weekend, next week...)
-💰 Budget (free, cheap, any)
-🎲 Or just say "surprise me"
-
-Example: "comedy shows, Brooklyn, this weekend, free"`;
-
-      return {
-        query, filters, results: [], count: 0, needsConstraints: true,
-        constraintType: 'event_category',
-        question,
-        replies: null  // No quick replies - let them type naturally
-      };
-    }
-
-    // 2. Check for missing date (only if this is a fresh search OR we don't have date from prior)
-    if (!filters.date && (isFreshSearch || !context?.lastFilters?.date)) {
-      console.log(`[EVENTS] Missing date, asking...`);
-
-      const eventType = filters.searchTerm || filters.category || 'events';
-      const question = `🎭 ${eventType}! NYC has tons happening.
-
-Tell me what you're looking for:
-
-📅 When (tonight, tomorrow, this weekend...)
-📍 Location (Manhattan, Brooklyn, Queens...)
-💰 Budget (free, cheap, any)
-🎲 Or just say "surprise me"
-
-Example: "this weekend, Manhattan, free"`;
-
-      return {
-        query, filters, results: [], count: 0, needsConstraints: true,
-        constraintType: 'event_date',
-        question,
-        replies: [
-          { title: 'Today 📅', payload: 'EVENT_DATE_today' },
-          { title: 'Tomorrow 🌅', payload: 'EVENT_DATE_tomorrow' },
-          { title: 'This Weekend ✨', payload: 'EVENT_DATE_weekend' },
-          { title: 'This Week 🗓️', payload: 'EVENT_DATE_this_week' },
-          { title: 'Anytime 🕒', payload: 'EVENT_DATE_any' }
-        ]
-      };
-    }
-
-    // 3. Check for missing borough
-    if (!filters.borough && (isFreshSearch || !context?.lastFilters?.borough)) {
-      console.log(`[EVENTS] Missing borough, asking...`);
-
-      const eventType = filters.searchTerm || filters.category || 'events';
-      const dateText = filters.date?.type ? ` ${filters.date.type.replace('_', ' ')}` : '';
-      const question = `🎭 ${eventType}${dateText}!
-
-Tell me what you're looking for:
-
-📍 Location (Manhattan, Brooklyn, Queens...)
-💰 Budget (free, cheap, any)
-🎲 Or just say "surprise me"
-
-Example: "Brooklyn, free"`;
-
-      return {
-        query, filters, results: [], count: 0, needsConstraints: true,
-        constraintType: 'event_borough',
-        question,
-        replies: [
-          { title: 'Manhattan 🏙️', payload: 'EVENT_BOROUGH_Manhattan' },
-          { title: 'Brooklyn 🌉', payload: 'EVENT_BOROUGH_Brooklyn' },
-          { title: 'Queens 🚇', payload: 'EVENT_BOROUGH_Queens' },
-          { title: 'Bronx 🏢', payload: 'EVENT_BOROUGH_Bronx' },
-          { title: 'Staten Island 🗽', payload: 'EVENT_BOROUGH_Staten Island' },
-          { title: 'Anywhere 🌍', payload: 'EVENT_BOROUGH_any' }
-        ]
-      };
-    }
-
-    // 4. Check for missing price (optional, but requested)
-    if ((filters.price === undefined || filters.price === null) && (isFreshSearch || (context?.lastFilters?.price === undefined))) {
-      console.log(`[EVENTS] Missing price, asking...`);
-
-      const eventType = filters.searchTerm || filters.category || 'events';
-      const dateText = filters.date?.type ? ` ${filters.date.type.replace('_', ' ')}` : '';
-      const locationText = filters.borough && filters.borough !== 'any' ? ` in ${filters.borough}` : '';
-      const question = `🎭 ${eventType}${dateText}${locationText}!
-
-Any preference on price?
-💰 Free, cheap, or any budget?
-🎲 Or just say "surprise me"`;
-
-      return {
-        query, filters, results: [], count: 0, needsConstraints: true,
-        constraintType: 'event_price',
-        question,
-        replies: [
-          { title: 'Free 💎', payload: 'EVENT_PRICE_free' },
-          { title: 'Budget 💸', payload: 'EVENT_PRICE_budget' },
-          { title: 'Any 🤷', payload: 'EVENT_PRICE_any' }
-        ]
-      };
-    }
+  // Set defaults for missing filters instead of asking
+  if (!filters.date) {
+    filters.date = { type: 'any' }; // Default to any date (today onwards)
+  }
+  if (!filters.borough) {
+    filters.borough = 'any'; // Default to all boroughs
+  }
+  if (!filters.price) {
+    filters.price = 'any'; // Default to any price
   }
 
   // Search events with filters
