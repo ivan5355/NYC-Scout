@@ -30,6 +30,7 @@ const axiosNoSSL = axios.create({
 const MONGO_URI = process.env.MONGO_URI;
 const DB_NAME = "goodrec";
 const COLLECTION_NAME = "events";
+const TICKETMASTER_API_KEY = process.env.TICKETMASTER_API_KEY;
 
 // NYC Open Data
 const NYC_PERMITTED_EVENTS_URL = 'https://data.cityofnewyork.us/resource/tvpp-9vvx.json';
@@ -148,7 +149,7 @@ async function fetchPermittedEvents() {
       .filter(e => isWithinNext14Days(e.start_date_time))
       .map(event => {
         const borough = normalizeBorough(event.event_borough);
-        const location = event.event_location 
+        const location = event.event_location
           ? `${event.event_location}${borough ? ` — ${borough}` : ''}`
           : borough || 'New York City';
 
@@ -157,7 +158,7 @@ async function fetchPermittedEvents() {
           date: formatDate(event.start_date_time),
           time: formatTime(event.start_date_time),
           location: location,
-          description: event.event_type 
+          description: event.event_type
             ? `${event.event_type} event in NYC. Check source for details.`
             : 'Public event in New York City.',
           link: `https://www.nyc.gov/events`, // NYC Open Data doesn't provide direct links
@@ -199,7 +200,7 @@ async function fetchParksEvents() {
         const startDate = event.startdate;
         const startTime = event.starttime;
 
-        const location = event.location 
+        const location = event.location
           ? `${event.location}${borough ? ` — ${borough}` : ''}`
           : borough || 'NYC Park';
 
@@ -214,7 +215,7 @@ async function fetchParksEvents() {
           date: startDate, // Already YYYY-MM-DD
           time: time,
           location: location,
-          description: event.categories 
+          description: event.categories
             ? `${event.categories}. Free event at NYC Parks.`
             : 'Free event at NYC Parks. Check site for details.',
           link: event.link || 'https://www.nycgovparks.org/events',
@@ -242,9 +243,9 @@ const limit = pLimit(CONCURRENCY);
 
 function extractEventbriteEvents(jsonData) {
   const events = [];
-  
+
   if (!jsonData || typeof jsonData !== 'object') return events;
-  
+
   // New format: itemListElement array with ListItem objects
   if (jsonData.itemListElement && Array.isArray(jsonData.itemListElement)) {
     jsonData.itemListElement.forEach(listItem => {
@@ -263,19 +264,19 @@ function extractEventbriteEvents(jsonData) {
       }
     });
   }
-  
+
   // Also check old format: direct Event objects
   if (jsonData["@type"] === "Event") {
     events.push(jsonData);
   }
-  
+
   // Recursively check arrays
   if (Array.isArray(jsonData)) {
     jsonData.forEach(item => {
       events.push(...extractEventbriteEvents(item));
     });
   }
-  
+
   return events;
 }
 
@@ -297,14 +298,14 @@ async function fetchEventbritePage(page) {
     const $ = cheerio.load(data);
 
     const events = [];
-    
+
     const scripts = $('script[type="application/ld+json"]');
 
     scripts.each((i, el) => {
       try {
         const content = $(el).text();
         if (!content || !content.trim()) return;
-        
+
         const json = JSON.parse(content);
         const extracted = extractEventbriteEvents(json);
         events.push(...extracted);
@@ -335,16 +336,16 @@ async function fetchEventbritePage(page) {
 async function fetchEventbriteEvents() {
   console.log('Fetching Eventbrite NYC...');
   const allRawEvents = [];
-  
+
   for (let i = 1; i <= EVENTBRITE_MAX_PAGES; i++) {
     const pageEvents = await limit(() => fetchEventbritePage(i));
     if (pageEvents.length === 0) {
       console.log(`No events on Eventbrite page ${i}. Stopping.`);
       break;
     }
-    
+
     allRawEvents.push(...pageEvents);
-    
+
     // Delay to avoid rate limiting
     await new Promise(r => setTimeout(r, 1000));
   }
@@ -371,7 +372,7 @@ async function fetchEventbriteEvents() {
       const venueName = event.location?.name || "New York City";
       const neighborhood = event.location?.address?.addressLocality || "";
       const borough = event.location?.address?.addressRegion || "";
-      
+
       let locationDisplay = venueName;
       if (neighborhood) {
         locationDisplay += ` — ${neighborhood}`;
@@ -411,6 +412,109 @@ async function fetchEventbriteEvents() {
 }
 
 /* =====================
+   SOURCE 4: TICKETMASTER
+   ===================== */
+
+async function fetchTicketmasterPage(page, startDateTime, endDateTime) {
+  const url = 'https://app.ticketmaster.com/discovery/v2/events.json';
+  try {
+    const response = await axiosNoSSL.get(url, {
+      params: {
+        apikey: TICKETMASTER_API_KEY,
+        city: 'New York',
+        stateCode: 'NY',
+        startDateTime: startDateTime,
+        endDateTime: endDateTime,
+        size: 100,
+        page: page,
+        sort: 'date,asc'
+      },
+      timeout: 15000
+    });
+
+    const events = response.data?._embedded?.events || [];
+    const totalPages = response.data?.page?.totalPages || 0;
+
+    const normalized = events.map(event => {
+      // Pricing
+      let price = "Check source";
+      if (event.priceRanges?.[0]) {
+        const p = event.priceRanges[0];
+        price = p.min === p.max ? `$${p.min}` : `$${p.min} - $${p.max}`;
+      }
+
+      // Location: "Venue — Neighborhood"
+      const venue = event._embedded?.venues?.[0]?.name || "New York City";
+      const neighborhood = event._embedded?.venues?.[0]?.neighborhood?.name || "";
+      const location = neighborhood ? `${venue} — ${neighborhood}` : venue;
+
+      // Description
+      let description = event.classifications?.[0]?.segment?.name || "Event";
+      if (event.classifications?.[0]?.genre?.name) {
+        description += ` (${event.classifications[0].genre.name})`;
+      }
+      description += ". Official Ticketmaster event.";
+
+      const dateTime = event.dates?.start?.dateTime;
+
+      return {
+        name: event.name || 'Ticketmaster Event',
+        date: dateTime ? formatDate(dateTime) : event.dates?.start?.localDate,
+        time: dateTime ? formatTime(dateTime) : (event.dates?.start?.localTime ? formatTime(`${event.dates.start.localDate}T${event.dates.start.localTime}`) : null),
+        location: location,
+        description: description,
+        link: event.url,
+        price: price,
+        source: 'GoodRec',
+        platform: 'Ticketmaster',
+        isActive: true,
+        _sourceId: event.id
+      };
+    });
+
+    return { events: normalized, totalPages };
+  } catch (err) {
+    console.error(`Ticketmaster page ${page} failed: ${err.message}`);
+    return { events: [], totalPages: 0 };
+  }
+}
+
+async function fetchTicketmasterEvents() {
+  if (!TICKETMASTER_API_KEY) {
+    console.log('Skipping Ticketmaster: TICKETMASTER_API_KEY not found');
+    return [];
+  }
+
+  console.log('Fetching Ticketmaster NYC...');
+
+  const now = new Date();
+  const twoWeeksLater = new Date();
+  twoWeeksLater.setDate(now.getDate() + 14);
+
+  const startDateTime = now.toISOString().split('.')[0] + 'Z';
+  const endDateTime = twoWeeksLater.toISOString().split('.')[0] + 'Z';
+
+  let allEvents = [];
+  let page = 0;
+  let totalPages = 1;
+
+  // Fetch up to 3 pages (300 events) to keep it fast
+  while (page < totalPages && page < 3) {
+    const result = await limit(() => fetchTicketmasterPage(page, startDateTime, endDateTime));
+    allEvents = allEvents.concat(result.events);
+    totalPages = result.totalPages;
+    console.log(`Ticketmaster page ${page + 1}/${totalPages}: ${result.events.length} events`);
+    page++;
+
+    // TM Rate limit is tight
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  console.log(`Ticketmaster: ${allEvents.length} events found`);
+  return allEvents;
+}
+
+/* =====================
    DATABASE SYNC
 ===================== */
 
@@ -420,18 +524,20 @@ async function syncAllEvents() {
   console.log('========================================\n');
 
   // Fetch from all sources in parallel
-  const [permitted, parks, eventbrite] = await Promise.all([
+  const [permitted, parks, eventbrite, ticketmaster] = await Promise.all([
     fetchPermittedEvents(),
     fetchParksEvents(),
     fetchEventbriteEvents(),
+    fetchTicketmasterEvents(),
   ]);
 
-  const allEvents = [...permitted, ...parks, ...eventbrite];
+  const allEvents = [...permitted, ...parks, ...eventbrite, ...ticketmaster];
 
   console.log(`\nTotal events collected: ${allEvents.length}`);
   console.log(`  - NYC Permitted: ${permitted.length}`);
   console.log(`  - NYC Parks: ${parks.length}`);
   console.log(`  - Eventbrite: ${eventbrite.length}`);
+  console.log(`  - Ticketmaster: ${ticketmaster.length}`);
 
   if (allEvents.length === 0) {
     console.log('No events to sync.');
@@ -479,7 +585,7 @@ async function syncAllEvents() {
   if (unique.length > 0) {
     // Remove internal _sourceId before inserting (optional, or keep for debugging)
     const toInsert = unique.map(({ _sourceId, ...rest }) => rest);
-    
+
     await collection.insertMany(toInsert);
     console.log(`Inserted ${toInsert.length} events`);
   }

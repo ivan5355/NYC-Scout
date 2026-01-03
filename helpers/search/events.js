@@ -52,14 +52,14 @@ async function fetchAllEvents() {
 
   try {
     const today = new Date().toISOString().split('T')[0];
-    
+
     const events = await collection.find({
       isActive: true,
       date: { $gte: today }
     })
-    .sort({ date: 1 })
-    .limit(500)
-    .toArray();
+      .sort({ date: 1 })
+      .limit(500)
+      .toArray();
 
     console.log(`Fetched ${events.length} events from MongoDB`);
     return events.map(mapEventToFormat);
@@ -130,14 +130,14 @@ function buildDateQuery(dateFilter) {
 
     case 'today':
       return { $regex: new RegExp(`^${todayStr}`) };
-      
+
     case 'tomorrow': {
       const tomorrow = new Date(today);
       tomorrow.setDate(today.getDate() + 1);
       const tomorrowStr = tomorrow.toISOString().split('T')[0];
       return { $regex: new RegExp(`^${tomorrowStr}`) };
     }
-    
+
     case 'weekend': {
       const dayOfWeek = today.getDay();
       // Find next Friday (or today if it's Fri-Sun)
@@ -147,38 +147,38 @@ function buildDateQuery(dateFilter) {
       friday.setDate(today.getDate() + daysUntilFriday);
       const sunday = new Date(friday);
       sunday.setDate(friday.getDate() + 2);
-      return { 
-        $gte: friday.toISOString().split('T')[0], 
-        $lte: sunday.toISOString().split('T')[0] 
+      return {
+        $gte: friday.toISOString().split('T')[0],
+        $lte: sunday.toISOString().split('T')[0]
       };
     }
-    
+
     case 'this_week': {
       const endOfWeek = new Date(today);
       endOfWeek.setDate(today.getDate() + 7);
-      return { 
-        $gte: todayStr, 
-        $lte: endOfWeek.toISOString().split('T')[0] 
+      return {
+        $gte: todayStr,
+        $lte: endOfWeek.toISOString().split('T')[0]
       };
     }
-    
+
     case 'next_week': {
       const startOfNextWeek = new Date(today);
       startOfNextWeek.setDate(today.getDate() + 7);
       const endOfNextWeek = new Date(today);
       endOfNextWeek.setDate(today.getDate() + 14);
-      return { 
-        $gte: startOfNextWeek.toISOString().split('T')[0], 
-        $lte: endOfNextWeek.toISOString().split('T')[0] 
+      return {
+        $gte: startOfNextWeek.toISOString().split('T')[0],
+        $lte: endOfNextWeek.toISOString().split('T')[0]
       };
     }
-    
+
     case 'specific':
       if (dateFilter.date) {
         return dateFilter.date;
       }
       return { $gte: todayStr };
-      
+
     default:
       return { $gte: todayStr };
   }
@@ -224,21 +224,21 @@ async function searchEventsDB(filters, limit = 20) {
       // Clean the search term: remove generic words like "show", "event" that cause false positives
       const genericWords = /\b(shows?|events?|things?|to do|activities|nyc|in|the|a|an)\b/gi;
       const cleanTerm = searchTerm.replace(genericWords, '').replace(/\s+/g, ' ').trim();
-      
+
       console.log(`[EVENTS DB] Cleaned search term: "${cleanTerm}"`);
-      
+
       if (cleanTerm && cleanTerm.length >= 2) {
         // Try text search with the cleaned term
         const textResults = await collection.find({
           ...query,
           $text: { $search: cleanTerm }
         })
-        .sort({ date: 1 })
-        .limit(limit)
-        .toArray();
-        
+          .sort({ date: 1 })
+          .limit(limit)
+          .toArray();
+
         results = [...textResults];
-        
+
         // Fallback to regex if text search returns few results
         if (results.length < 5) {
           const flexibleRegex = new RegExp(cleanTerm, 'i');
@@ -252,21 +252,21 @@ async function searchEventsDB(filters, limit = 20) {
             ],
             _id: { $nin: results.map(r => r._id) }
           })
-          .sort({ date: 1 })
-          .limit(limit - results.length)
-          .toArray();
-          
+            .sort({ date: 1 })
+            .limit(limit - results.length)
+            .toArray();
+
           results = [...results, ...regexResults];
         }
-        
+
         console.log(`[EVENTS DB] Search term "${cleanTerm}" found ${results.length} events`);
       }
     }
-    
+
     // FALLBACK/SUPPLEMENT: If few results from search term, try category keywords
     if (results.length < 5 && category) {
       let keywords = categoryKeywordsMap[category];
-      
+
       // If the category returned by Gemini isn't in our map, 
       // treat the category name itself as a search keyword
       if (!keywords) {
@@ -275,32 +275,32 @@ async function searchEventsDB(filters, limit = 20) {
       } else {
         console.log(`[EVENTS DB] Supplementing with category "${category}" keywords`);
       }
-      
+
       const orConditions = keywords.flatMap(term => [
         { name: { $regex: new RegExp(term, 'i') } },
         { description: { $regex: new RegExp(term, 'i') } }
       ]);
-      
+
       const catResults = await collection.find({
         ...query,
         $or: orConditions,
         _id: { $nin: results.map(r => r._id) } // Don't duplicate
       })
-      .sort({ date: 1 })
-      .limit(limit - results.length)
-      .toArray();
-      
+        .sort({ date: 1 })
+        .limit(limit - results.length)
+        .toArray();
+
       results = [...results, ...catResults];
-      
+
       console.log(`[EVENTS DB] After category supplement: ${results.length} events`);
     }
-    
+
     // NO GENERAL FALLBACK: If we found nothing relevant, don't add random events.
     // This prevents "Art Show" appearing for "Comedy Show" - better to go to web search.
-    
+
     console.log(`[EVENTS DB] Final: ${results.length} events`);
     return results.map(mapEventToFormat);
-    
+
   } catch (err) {
     console.error('MongoDB event search failed:', err.message);
     return [];
@@ -315,13 +315,13 @@ async function searchEvents(userId, query, context = null) {
   // 1. Get NEW filters from Gemini (passed via context.eventFilters)
   const newFilters = context?.eventFilters || {};
   const filters = { ...newFilters };
-  
+
   // 2. Detect if this is a completely new search topic
   const isFreshSearch = !!(newFilters.searchTerm || newFilters.category);
-  const isDifferentTopic = isFreshSearch && 
+  const isDifferentTopic = isFreshSearch &&
     (newFilters.searchTerm !== context?.lastFilters?.searchTerm ||
-     newFilters.category !== context?.lastFilters?.category);
-  
+      newFilters.category !== context?.lastFilters?.category);
+
   // 3. Merge with lastFilters ONLY if same topic (for continuation)
   if (context?.lastFilters && !isDifferentTopic) {
     for (const [key, value] of Object.entries(context.lastFilters)) {
@@ -331,7 +331,7 @@ async function searchEvents(userId, query, context = null) {
       }
     }
   }
-  
+
   // 4. If different topic, start fresh - clear shown history
   if (isDifferentTopic) {
     console.log(`[EVENTS] New search topic "${newFilters.searchTerm || newFilters.category}", starting fresh`);
@@ -347,42 +347,61 @@ async function searchEvents(userId, query, context = null) {
 
   console.log(`[EVENTS] Searching for: "${query}"`);
   console.log(`[EVENTS] Filters used:`, JSON.stringify(filters, null, 2));
-  
+
   // Check for follow-up
   const lowerQuery = query.toLowerCase();
   const followUpPatterns = ['more', 'other', 'different', 'another', 'next'];
   const isFollowUp = followUpPatterns.some(p => lowerQuery.includes(p)) && lowerQuery.split(' ').length <= 5;
-  
+
   // --- CONSTRAINT GATE ---
   // If this is a fresh search (not a follow-up), check what info we're missing
   if (!isFollowUp) {
     console.log(`[EVENTS] Constraint Check - SearchTerm: ${!!filters.searchTerm}, Category: ${!!filters.category}, Date: ${!!filters.date}, Price: ${filters.price}`);
 
-    // 1. Check for missing category/search term
+    // 1. Check for missing category/search term - use conversational prompt
     if (!filters.category && !filters.searchTerm) {
-      console.log(`[EVENTS] Missing category/searchTerm, asking...`);
+      console.log(`[EVENTS] Missing category/searchTerm, asking with friendly prompt...`);
+
+      const question = `🎉 Events! NYC has 200+ happening this week.
+
+Tell me what you're looking for:
+
+🎭 Type (music, comedy, art, sports, theater...)
+📍 Location (Manhattan, Brooklyn, Queens...)
+📅 When (tonight, this weekend, next week...)
+💰 Budget (free, cheap, any)
+🎲 Or just say "surprise me"
+
+Example: "comedy shows, Brooklyn, this weekend, free"`;
+
       return {
         query, filters, results: [], count: 0, needsConstraints: true,
         constraintType: 'event_category',
-        question: "What kind of events are you looking for?",
-        replies: [
-          { title: '🎵 Music', payload: 'EVENT_CAT_music' },
-          { title: '🎭 Theater', payload: 'EVENT_CAT_theater' },
-          { title: '🏀 Sports', payload: 'EVENT_CAT_sports' },
-          { title: '🎨 Art', payload: 'EVENT_CAT_art' },
-          { title: '🥳 Party', payload: 'EVENT_CAT_nightlife' },
-          { title: '🛒 Markets', payload: 'EVENT_CAT_market' }
-        ]
+        question,
+        replies: null  // No quick replies - let them type naturally
       };
     }
 
     // 2. Check for missing date (only if this is a fresh search OR we don't have date from prior)
     if (!filters.date && (isFreshSearch || !context?.lastFilters?.date)) {
       console.log(`[EVENTS] Missing date, asking...`);
+
+      const eventType = filters.searchTerm || filters.category || 'events';
+      const question = `🎭 ${eventType}! NYC has tons happening.
+
+Tell me what you're looking for:
+
+📅 When (tonight, tomorrow, this weekend...)
+📍 Location (Manhattan, Brooklyn, Queens...)
+💰 Budget (free, cheap, any)
+🎲 Or just say "surprise me"
+
+Example: "this weekend, Manhattan, free"`;
+
       return {
         query, filters, results: [], count: 0, needsConstraints: true,
         constraintType: 'event_date',
-        question: `When are you looking for ${filters.searchTerm || filters.category || ''} events?`,
+        question,
         replies: [
           { title: 'Today 📅', payload: 'EVENT_DATE_today' },
           { title: 'Tomorrow 🌅', payload: 'EVENT_DATE_tomorrow' },
@@ -396,10 +415,23 @@ async function searchEvents(userId, query, context = null) {
     // 3. Check for missing borough
     if (!filters.borough && (isFreshSearch || !context?.lastFilters?.borough)) {
       console.log(`[EVENTS] Missing borough, asking...`);
+
+      const eventType = filters.searchTerm || filters.category || 'events';
+      const dateText = filters.date?.type ? ` ${filters.date.type.replace('_', ' ')}` : '';
+      const question = `🎭 ${eventType}${dateText}!
+
+Tell me what you're looking for:
+
+📍 Location (Manhattan, Brooklyn, Queens...)
+💰 Budget (free, cheap, any)
+🎲 Or just say "surprise me"
+
+Example: "Brooklyn, free"`;
+
       return {
         query, filters, results: [], count: 0, needsConstraints: true,
         constraintType: 'event_borough',
-        question: `Where in NYC are you looking for ${filters.searchTerm || filters.category || ''} events?`,
+        question,
         replies: [
           { title: 'Manhattan 🏙️', payload: 'EVENT_BOROUGH_Manhattan' },
           { title: 'Brooklyn 🌉', payload: 'EVENT_BOROUGH_Brooklyn' },
@@ -414,10 +446,20 @@ async function searchEvents(userId, query, context = null) {
     // 4. Check for missing price (optional, but requested)
     if ((filters.price === undefined || filters.price === null) && (isFreshSearch || (context?.lastFilters?.price === undefined))) {
       console.log(`[EVENTS] Missing price, asking...`);
+
+      const eventType = filters.searchTerm || filters.category || 'events';
+      const dateText = filters.date?.type ? ` ${filters.date.type.replace('_', ' ')}` : '';
+      const locationText = filters.borough && filters.borough !== 'any' ? ` in ${filters.borough}` : '';
+      const question = `🎭 ${eventType}${dateText}${locationText}!
+
+Any preference on price?
+💰 Free, cheap, or any budget?
+🎲 Or just say "surprise me"`;
+
       return {
         query, filters, results: [], count: 0, needsConstraints: true,
         constraintType: 'event_price',
-        question: "Any preference on price?",
+        question,
         replies: [
           { title: 'Free 💎', payload: 'EVENT_PRICE_free' },
           { title: 'Budget 💸', payload: 'EVENT_PRICE_budget' },
@@ -454,12 +496,12 @@ async function searchEvents(userId, query, context = null) {
   // If DB found events but all were filtered out (already shown)
   if (dbFoundCount > 0 && results.length === 0) {
     console.log(`[EVENTS] All ${dbFoundCount} DB results were already shown`);
-    return { 
-      query, 
-      filters, 
-      results: [], 
-      count: 0, 
-      needsConstraints: false, 
+    return {
+      query,
+      filters,
+      results: [],
+      count: 0,
+      needsConstraints: false,
       isWebSearch: false,
       allShown: true,
       message: `You've seen all the ${filters.searchTerm || filters.category || ''} events I found. Try a different date or category?`
@@ -480,12 +522,12 @@ async function searchEventsWithWebSearch(userId, query, filters) {
 
   try {
     const today = new Date().toISOString().split('T')[0];
-    
+
     let dateHint = '';
     if (filters.date?.type && filters.date.type !== 'any') {
       dateHint = ` for ${filters.date.type.replace('_', ' ')}`;
     }
-    
+
     let priceHint = '';
     if (filters.price === 'free') {
       priceHint = ' free';
@@ -554,16 +596,16 @@ Reply with "Say 'more' for other options." at the end.`;
     // Programmatic cleanup: remove any Google Search / Vertex AI redirect links that leaked through
     if (cleanedText && (cleanedText.includes('vertexaisearch.cloud.google.com') || cleanedText.includes('google.com/search'))) {
       console.log('[EVENTS] Detected redirect links, filtering response...');
-      
+
       // Split by numbered list (e.g., "1. ", "2. ")
       const parts = cleanedText.split(/\n(?=\d+\.\s)/);
-      const filteredParts = parts.filter(part => 
-        !part.includes('vertexaisearch.cloud.google.com') && 
+      const filteredParts = parts.filter(part =>
+        !part.includes('vertexaisearch.cloud.google.com') &&
         !part.includes('google.com/search')
       );
-      
+
       if (filteredParts.length === 0) return null;
-      
+
       // Re-number and join
       cleanedText = filteredParts.map((part, i) => {
         return part.replace(/^\d+\./, `${i + 1}.`);
@@ -583,9 +625,9 @@ Reply with "Say 'more' for other options." at the end.`;
 
 function formatEventResults(searchResult) {
   if (searchResult.webSearchResponse) {
-    return { 
-      text: `🌐 I found these events on the web:\n\n${searchResult.webSearchResponse}`, 
-      isQuestion: false 
+    return {
+      text: `🌐 I found these events on the web:\n\n${searchResult.webSearchResponse}`,
+      isQuestion: false
     };
   }
 
@@ -599,7 +641,7 @@ function formatEventResults(searchResult) {
 
   if (searchResult.count === 0) {
     const searchTerm = searchResult.filters?.searchTerm || 'that';
-    return { 
+    return {
       text: `Couldn't find ${searchTerm} events in our database. Try a different date or category?`,
       isQuestion: false
     };
@@ -621,11 +663,11 @@ function formatEventResults(searchResult) {
     response += `🕓 ${date}\n`;
     response += `📍 ${location.length > 40 ? location.substring(0, 37) + '...' : location}\n`;
     response += `💰 ${price}\n`;
-    
+
     if (description && description.length < 100) {
       response += `🏷️ ${description.substring(0, 60)}${description.length > 60 ? '...' : ''}\n`;
     }
-    
+
     if (link) {
       response += `🔗 ${source}: ${link}\n`;
     }
