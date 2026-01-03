@@ -166,7 +166,8 @@ async function handleDM(body) {
    MAIN DM PROCESSING (with Intent Classification Flow)
    ===================== */
 async function processDM(senderId, messageText, payload, profile, context) {
-  console.log(`Processing: ${messageText || payload}`);
+  console.log(`[DM] Processing Instagram DM: "${messageText || payload}"`);
+
 
   if (isMoreRequest(messageText)) {
     return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
@@ -190,9 +191,9 @@ async function processDM(senderId, messageText, payload, profile, context) {
   // Step 2: Detect existing filters
   // Step 3: Ask for missing filters OR run search
   // =====================
-
+  console.log(`[DM INTENT] Starting intent classification for: "${messageText}"`);
   const intentResult = await classifyIntentAndFilters(senderId, messageText);
-  console.log(`[INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}`);
+  console.log(`[DM INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}, Filters:`, JSON.stringify(intentResult.detectedFilters));
 
   // Handle follow-up mode
   if (intentResult.type === 'FOLLOWUP' && context?.lastCategory) {
@@ -252,24 +253,15 @@ async function processDM(senderId, messageText, payload, profile, context) {
       // Fallback: default event filter prompt
       const defaultPrompt = `🎪 NYC has hundreds of events!
 
-Tell me what you're looking for:
+Tell me what you're looking for in one message:
 
 📍 Location (Manhattan, Brooklyn, Queens...)
 📅 Date (tonight, this weekend, next week...)
-💰 Price (free, budget)
-✨ Type (music, comedy, art, nightlife, special...)
+💰 Price (free, budget, any)
+✨ Type (music, comedy, art, nightlife, sports...)
 
-Example: "Brooklyn, tonight, free comedy"`;
-      const defaultButtons = [
-        { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
-        { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
-        { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
-        { title: '🎵 Live music', payload: 'EVENT_CAT_music' },
-        { title: '😂 Comedy', payload: 'EVENT_CAT_comedy' },
-        { title: '🍻 Nightlife', payload: 'EVENT_CAT_nightlife' },
-        { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
-      ];
-      await sendMessage(senderId, defaultPrompt, defaultButtons);
+Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
+      await sendMessage(senderId, defaultPrompt);
     }
     return;
   }
@@ -472,7 +464,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
     const searchTerm = detectedFilters.searchTerm?.toLowerCase() || '';
     const categoryName = detectedFilters.category?.toLowerCase() || '';
     const hasSpecificTerm = searchTerm && !genericEventTerms.includes(searchTerm);
-    const hasSpecificCategory = categoryName && !['general', 'other', 'any'].includes(categoryName);
+    const hasSpecificCategory = categoryName && !['general', 'other', 'any', 'special'].includes(categoryName);
     const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
 
     if (hasSearchableTerm) {
@@ -499,24 +491,15 @@ async function processDMForTest(senderId, messageText, payload = null) {
     } else {
       const defaultPrompt = `🎪 NYC has hundreds of events!
 
-Tell me what you're looking for:
+Tell me what you're looking for in one message:
 
 📍 Location (Manhattan, Brooklyn, Queens...)
 📅 Date (tonight, this weekend, next week...)
-💰 Price (free, budget)
-✨ Type (music, comedy, art, nightlife, special...)
+💰 Price (free, budget, any)
+✨ Type (music, comedy, art, nightlife, sports...)
 
-Example: "Brooklyn, tonight, free comedy"`;
-      const defaultButtons = [
-        { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
-        { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
-        { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
-        { title: '🎵 Live music', payload: 'EVENT_CAT_music' },
-        { title: '😂 Comedy', payload: 'EVENT_CAT_comedy' },
-        { title: '🍻 Nightlife', payload: 'EVENT_CAT_nightlife' },
-        { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
-      ];
-      return { reply: defaultPrompt, buttons: defaultButtons, category: 'EVENT' };
+Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
+      return { reply: defaultPrompt, buttons: null, category: 'EVENT' };
     }
   }
 

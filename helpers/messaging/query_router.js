@@ -476,7 +476,7 @@ function generateFilterPrompt(type, detectedFilters, missingFilters) {
 function generateEventFilterPrompt(detectedFilters, missingFilters) {
   const searchDesc = detectedFilters.searchTerm || detectedFilters.category || 'events';
 
-  // Build a summary of what we know
+  // Build summary of what we already know
   let knownParts = [];
   if (detectedFilters.searchTerm) knownParts.push(`"${detectedFilters.searchTerm}"`);
   if (detectedFilters.date) knownParts.push(detectedFilters.date);
@@ -485,141 +485,54 @@ function generateEventFilterPrompt(detectedFilters, missingFilters) {
 
   const summary = knownParts.length > 0 ? `Got it — ${knownParts.join(', ')}! ` : '';
 
-  // Prioritize what to ask for
-  const primaryMissing = missingFilters[0];
+  // ONE prompt asking for ALL filters at once
+  const eventFullPrompt = `🎪 NYC has hundreds of events!
 
-  const eventRichPrompt = `🎪 NYC has hundreds of events!
-
-Tell me what you're looking for:
+Tell me what you're looking for in one message:
 
 📍 Location (Manhattan, Brooklyn, Queens...)
 📅 Date (tonight, this weekend, next week...)
-💰 Price (free, budget)
-✨ Type (music, comedy, art, nightlife, special...)
+💰 Price (free, budget, any)
+✨ Type (music, comedy, art, nightlife, sports...)
 
-Example: "Brooklyn, tonight, free comedy"`;
+Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
 
-  if (primaryMissing === 'date' || primaryMissing === 'category' || primaryMissing === 'searchTerm') {
-    return {
-      text: `${summary}${eventRichPrompt}`,
-      buttons: [
-        { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
-        { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
-        { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
-        { title: '🎵 Live music', payload: 'EVENT_CAT_music' },
-        { title: '😂 Comedy', payload: 'EVENT_CAT_comedy' },
-        { title: '🍻 Nightlife', payload: 'EVENT_CAT_nightlife' },
-        { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
-      ],
-      type: 'event_filter_request'
-    };
-  }
-
-  if (primaryMissing === 'borough') {
-    return {
-      text: `${summary}📍 Which area?`,
-      buttons: [
-        { title: 'Manhattan 🏙️', payload: 'EVENT_BOROUGH_MANHATTAN' },
-        { title: 'Brooklyn 🌉', payload: 'EVENT_BOROUGH_BROOKLYN' },
-        { title: 'Queens 🚇', payload: 'EVENT_BOROUGH_QUEENS' },
-        { title: 'Anywhere 🗽', payload: 'EVENT_BOROUGH_ANY' }
-      ],
-      type: 'event_filter_request'
-    };
-  }
-
-  // Default: ask for general preferences
   return {
-    text: `${summary}${eventRichPrompt}`,
-    buttons: [
-      { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
-      { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
-      { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
-      { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
-    ],
+    text: `${summary}${eventFullPrompt}`,
+    buttons: null,
     type: 'event_filter_request'
   };
 }
 
 function generateRestaurantFilterPrompt(detectedFilters, missingFilters) {
-  const cuisine = detectedFilters.cuisine || detectedFilters.dish || 'food';
-
-  // Build a summary of what we know  
+  // Build summary of what we already know
   let knownParts = [];
   if (detectedFilters.cuisine) knownParts.push(detectedFilters.cuisine);
   if (detectedFilters.dish) knownParts.push(detectedFilters.dish);
   if (detectedFilters.borough) knownParts.push(detectedFilters.borough);
   if (detectedFilters.budget) knownParts.push(detectedFilters.budget);
 
-  const summary = knownParts.length > 0 ? `Nice — ${knownParts.join(', ')}! ` : '';
+  const summary = knownParts.length > 0 ? `Got it — ${knownParts.join(', ')}! ` : '';
 
-  // Prioritize what to ask for
-  const primaryMissing = missingFilters[0];
+  // ONE prompt asking for ALL filters at once
+  const restaurantFullPrompt = `🍽️ NYC has thousands of restaurants!
 
-  if (primaryMissing === 'cuisine' || primaryMissing === 'dish') {
-    return {
-      text: `${summary}🍽️ What are you craving?`,
-      buttons: [
-        { title: '🍜 Asian', payload: 'CUISINE_asian' },
-        { title: '🍕 Italian', payload: 'CUISINE_italian' },
-        { title: '🌮 Mexican', payload: 'CUISINE_mexican' },
-        { title: '🍔 American', payload: 'CUISINE_american' },
-        { title: '🍲 Indian', payload: 'CUISINE_indian' },
-        { title: '🥙 Middle Eastern', payload: 'CUISINE_middle_eastern' },
-        { title: '🎲 Surprise me', payload: 'CUISINE_surprise' }
-      ],
-      type: 'restaurant_filter_request'
-    };
-  }
+Tell me what you're looking for in one message:
 
-  if (primaryMissing === 'borough') {
-    const cuisineDisplay = summary ? '' : `${cuisine}! `;
-    return {
-      text: `${summary}📍 ${cuisineDisplay}Where in NYC?`,
-      buttons: [
-        { title: 'Manhattan 🏙️', payload: 'BOROUGH_MANHATTAN' },
-        { title: 'Brooklyn 🌉', payload: 'BOROUGH_BROOKLYN' },
-        { title: 'Queens 🚇', payload: 'BOROUGH_QUEENS' },
-        { title: 'Bronx 🏠', payload: 'BOROUGH_BRONX' },
-        { title: 'Anywhere 🗽', payload: 'BOROUGH_ANY' }
-      ],
-      type: 'restaurant_filter_request'
-    };
-  }
+🍜 Food type (sushi, pizza, thai, tacos, italian...)
+📍 Location (Manhattan, Brooklyn, Queens...)
+💰 Budget (cheap, moderate, fancy)
+✨ Vibe (casual, date night, trendy, hidden gem)
 
-  if (primaryMissing === 'budget') {
-    return {
-      text: `${summary}💰 What's your budget for ${cuisine}?`,
-      buttons: [
-        { title: '💸 Cheap', payload: 'BUDGET_$' },
-        { title: '🙂 Moderate', payload: 'BUDGET_$$' },
-        { title: '✨ Nice', payload: 'BUDGET_$$$' },
-        { title: '🤷 Any budget', payload: 'BUDGET_ANY' }
-      ],
-      type: 'restaurant_filter_request'
-    };
-  }
+Example: "cheap sushi in Manhattan" or "trendy Italian date spot in Brooklyn"`;
 
-  if (primaryMissing === 'vibe') {
-    return {
-      text: `${summary}✨ What vibe for ${cuisine}?`,
-      buttons: [
-        { title: '🍕 Casual', payload: 'VIBE_CASUAL' },
-        { title: '💕 Date night', payload: 'VIBE_DATE' },
-        { title: '🔥 Trendy', payload: 'VIBE_TRENDY' },
-        { title: '💎 Hidden gem', payload: 'VIBE_HIDDEN' }
-      ],
-      type: 'restaurant_filter_request'
-    };
-  }
-
-  // Default: comprehensive question
   return {
-    text: `${summary}🍽️ Looking for ${cuisine}! Tell me more:\n\n📍 Area (Manhattan, Brooklyn...)\n💰 Budget (cheap, moderate, fancy)\n✨ Vibe (casual, date night, trendy)\n\nOr just say "surprise me" 🎲`,
+    text: `${summary}${restaurantFullPrompt}`,
     buttons: null,
     type: 'restaurant_filter_request'
   };
 }
+
 
 /* =====================
    HELPER TO CHECK IF READY TO SEARCH

@@ -96,13 +96,13 @@ function parseBoroughFromText(text) {
   for (const [key, val] of Object.entries(boroughMap)) {
     if (t.includes(key)) return val;
   }
-  return undefined; 
+  return undefined;
 }
 
 async function sendMessage(recipientId, text, quickReplies = null) {
   const textStr = typeof text === 'string' ? text : String(text || '');
   const isTokenValid = PAGE_ACCESS_TOKEN && PAGE_ACCESS_TOKEN !== 'null' && PAGE_ACCESS_TOKEN !== 'undefined';
-  
+
   if (!isTokenValid) {
     console.log('[DEV MODE] No valid PAGE_ACCESS_TOKEN. Recipient:', recipientId, 'Text:', textStr.substring(0, 50) + '...');
     return;
@@ -130,8 +130,8 @@ async function sendMessage(recipientId, text, quickReplies = null) {
   console.log('   Quick replies:', quickReplies?.length || 0);
 
   try {
-    await graphClient.post('https://graph.facebook.com/v18.0/me/messages', payload, { 
-      params: { access_token: PAGE_ACCESS_TOKEN } 
+    await graphClient.post('https://graph.facebook.com/v18.0/me/messages', payload, {
+      params: { access_token: PAGE_ACCESS_TOKEN }
     });
     console.log(`✅ Successfully sent message to ${recipientId}`);
   } catch (err) {
