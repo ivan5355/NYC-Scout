@@ -51,7 +51,7 @@ function getMessageId(body) {
 
 function isDuplicateMessage(messageId) {
   if (!messageId) return false;
-  
+
   // Clean up old entries
   const now = Date.now();
   for (const [id, timestamp] of processedMessages) {
@@ -59,12 +59,12 @@ function isDuplicateMessage(messageId) {
       processedMessages.delete(id);
     }
   }
-  
+
   if (processedMessages.has(messageId)) {
     console.log(`[DEDUP] Skipping duplicate message: ${messageId}`);
     return true;
   }
-  
+
   processedMessages.set(messageId, now);
   return false;
 }
@@ -120,17 +120,8 @@ async function handleModeSelection(senderId, payload, returnResult = false) {
 
   if (payload === 'MODE_EVENTS' || payload === 'CATEGORY_EVENTS') {
     const reply = "What kind of vibe?";
-    const buttons = [
-      { title: 'Tonight', payload: 'EVENT_DATE_tonight' },
-      { title: 'This weekend', payload: 'EVENT_DATE_weekend' },
-      { title: 'Free stuff', payload: 'EVENT_PRICE_free' },
-      { title: 'Live music', payload: 'EVENT_CAT_music' },
-      { title: 'Comedy', payload: 'EVENT_CAT_comedy' },
-      { title: 'Tech / Meetups', payload: 'EVENT_CAT_tech' },
-      { title: 'Nightlife', payload: 'EVENT_CAT_nightlife' }
-    ];
-    if (returnResult) return { reply, buttons, category: "SYSTEM" };
-    await sendMessage(senderId, reply, buttons);
+    if (returnResult) return { reply, category: "SYSTEM" };
+    await sendMessage(senderId, reply);
     return true;
   }
 
@@ -213,7 +204,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
   const socialResult = await handleSocialDM(senderId, messageText, payload, context);
   if (socialResult) {
     if (socialResult.reply) {
-      await sendMessage(senderId, socialResult.reply, socialResult.buttons);
+      await sendMessage(senderId, socialResult.reply);
     }
     return;
   }
@@ -226,7 +217,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
   if (context?.pendingType === 'restaurant_preferences' && messageText && !payload) {
     const result = await handleConversationalPreferences(senderId, messageText, profile, context);
     if (result?.reply) {
-      await sendMessage(senderId, result.reply, result.buttons);
+      await sendMessage(senderId, result.reply);
     }
     return;
   }
@@ -239,7 +230,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
 
     // Use Gemini to parse the filters
     const parsedFilters = await parseEventFiltersWithGemini(messageText);
-    
+
     // Merge parsed filters with pending filters (pending has searchTerm/category)
     if (parsedFilters.date) pendingFilters.date = parsedFilters.date;
     if (parsedFilters.borough) pendingFilters.borough = parsedFilters.borough;
@@ -250,7 +241,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
       console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
     }
-    
+
     // No filters parsed - treat as a new query, clear pending state
     await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
   }
@@ -324,7 +315,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
     });
 
     if (filterPrompt) {
-      await sendMessage(senderId, filterPrompt.text, filterPrompt.buttons);
+      await sendMessage(senderId, filterPrompt.text);
     } else {
       // Fallback: default event filter prompt
       const defaultPrompt = `🎪 NYC has hundreds of events!
@@ -365,7 +356,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
         lastCategory: 'FOOD_SEARCH'
       });
 
-      await sendMessage(senderId, filterPrompt.text, filterPrompt.buttons);
+      await sendMessage(senderId, filterPrompt.text);
       return;
     }
 
@@ -451,7 +442,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
 
     // Use Gemini to parse the filters
     const parsedFilters = await parseEventFiltersWithGemini(messageText);
-    
+
     // Merge parsed filters with pending filters (pending has searchTerm/category)
     if (parsedFilters.date) pendingFilters.date = parsedFilters.date;
     if (parsedFilters.borough) pendingFilters.borough = parsedFilters.borough;
@@ -462,7 +453,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
       console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, true);
     }
-    
+
     // No filters parsed - treat as a new query, clear pending state
     await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
   }
@@ -540,7 +531,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
     });
 
     if (filterPrompt) {
-      return { reply: filterPrompt.text, buttons: filterPrompt.buttons, category: 'EVENT' };
+      return { reply: filterPrompt.text, category: 'EVENT' };
     } else {
       const defaultPrompt = `🎪 NYC has hundreds of events!
 
@@ -572,7 +563,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
         pendingFilters: detectedFilters,
         lastCategory: 'FOOD_SEARCH'
       });
-      return { reply: filterPrompt.text, buttons: filterPrompt.buttons, category: 'RESTAURANT' };
+      return { reply: filterPrompt.text, category: 'RESTAURANT' };
     }
     return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
   }

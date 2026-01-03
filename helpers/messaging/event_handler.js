@@ -11,7 +11,7 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
     lastFilters: pendingFilters,
     lastCategory: 'EVENT'
   });
-  
+
   // Build a fresh context for the search (without the old pendingType)
   const freshContext = {
     ...context,
@@ -19,9 +19,9 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
     eventFilters: pendingFilters,
     lastFilters: pendingFilters
   };
-  
+
   const searchResult = await searchEvents(senderId, pendingQuery || 'events', freshContext);
-  
+
   if (searchResult.needsConstraints) {
     await updateContext(senderId, {
       pendingType: 'event_gate',
@@ -29,14 +29,14 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
       pendingFilters: searchResult.filters,
       lastCategory: 'EVENT'
     });
-    
-    if (returnResult) return { reply: searchResult.question, buttons: searchResult.replies, category: 'EVENT' };
-    await sendMessage(senderId, searchResult.question, searchResult.replies);
+
+    if (returnResult) return { reply: searchResult.question, category: 'EVENT' };
+    await sendMessage(senderId, searchResult.question);
     return true;
   }
 
   const formatted = formatEventResults(searchResult);
-  
+
   const shownIds = searchResult.results.map(e => e.event_id).filter(Boolean);
   if (shownIds.length > 0) {
     await addShownEvents(senderId, shownIds);
@@ -51,9 +51,9 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
   });
 
   if (returnResult) return { reply: formatted.text, category: 'EVENT' };
-  
-  await sendMessage(senderId, formatted.text, formatted.replies || null);
-  
+
+  await sendMessage(senderId, formatted.text);
+
   // Social CTA disabled for now - keeping logic for future use
   // if (searchResult.results?.length > 0) {
   //   const socialCTA = {
@@ -65,7 +65,7 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
   //   };
   //   await sendMessage(senderId, socialCTA.text, socialCTA.replies);
   // }
-  
+
   return true;
 }
 
@@ -86,13 +86,13 @@ async function handleEventCategoryPayload(senderId, payload, pendingQuery, pendi
     pendingFilters.date = type === 'any' ? { type: 'any' } : { type };
     return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult);
   }
-  
+
   if (payload.startsWith('EVENT_BOROUGH_')) {
     const borough = parseBoroughFromPayload(payload);
     if (borough !== undefined) pendingFilters.borough = borough;
     return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult);
   }
-  
+
   return false;
 }
 

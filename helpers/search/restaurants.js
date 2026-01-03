@@ -18,22 +18,22 @@ function repairTruncatedJSON(jsonText) {
     // Try to find and extract complete results array entries
     const resultsMatch = jsonText.match(/"results"\s*:\s*\[/);
     if (!resultsMatch) return null;
-    
+
     const startIdx = resultsMatch.index + resultsMatch[0].length;
     const results = [];
     let depth = 1;
     let objStart = startIdx;
     let inString = false;
     let escape = false;
-    
+
     for (let i = startIdx; i < jsonText.length && depth > 0; i++) {
       const char = jsonText[i];
-      
+
       if (escape) { escape = false; continue; }
       if (char === '\\') { escape = true; continue; }
       if (char === '"' && !escape) { inString = !inString; continue; }
       if (inString) continue;
-      
+
       if (char === '{') {
         if (depth === 1) objStart = i;
         depth++;
@@ -50,7 +50,7 @@ function repairTruncatedJSON(jsonText) {
         break;
       }
     }
-    
+
     if (results.length > 0) {
       console.log(`[GEMINI SEARCH] Recovered ${results.length} restaurants from truncated JSON`);
       return { results, note: 'Some results may have been truncated' };
@@ -342,7 +342,7 @@ function detectSpotlightQuery(query) {
     /is (.+?) good/i, /tell me about (.+?)(?:\?|$)/i,
     /have you heard of (.+?)(?:\?|$)/i
   ];
-  
+
   for (const pattern of patterns) {
     const match = t.match(pattern);
     if (match && match[1]) {
@@ -360,7 +360,7 @@ function detectSpotlightQuery(query) {
 // =====================
 async function extractIntentWithGemini(query) {
   if (!GEMINI_API_KEY) return null;
-  
+
   const prompt = `You are NYC Scout's intent parser. Extract structured intent from this food query.
 
 Query: "${query}"
@@ -377,8 +377,7 @@ Return ONLY valid JSON (no markdown, no explanation):
   "occasion": "date" | "birthday" | "group" | "quick" | "late-night" | null,
   "needs_constraint": true | false,
   "missing_constraint": "borough" | "budget" | null,
-  "followup_question": "single question to ask if needs_constraint is true",
-  "quick_replies": ["button1", "button2", "button3", "button4"]
+  "followup_question": "single question to ask if needs_constraint is true"
 }
 
 Rules:
@@ -389,24 +388,23 @@ Rules:
 - CRITICAL: "sushi" is a DISH, not a cuisine. Set dish="sushi", not cuisine="Japanese"
 - CRITICAL: "ramen" is a DISH, not a cuisine. Set dish="ramen", not cuisine="Japanese"
 - Extract borough from neighborhoods (Williamsburg->Brooklyn, Flushing->Queens, Astoria->Queens)
-- needs_constraint=true ONLY if borough is missing for dish/cuisine queries
-- If needs_constraint=true, provide exactly ONE followup_question and 4-6 quick_replies
+- If needs_constraint=true, provide exactly ONE followup_question
 - dietary: look for vegetarian, vegan, halal, kosher, gluten-free, nut allergy, no pork`;
 
   try {
     const response = await apiClient.post(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
-      { 
-        contents: [{ parts: [{ text: prompt }] }], 
-        generationConfig: { maxOutputTokens: 500, temperature: 0.1 } 
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 500, temperature: 0.1 }
       },
       { params: { key: GEMINI_API_KEY } }
     );
-    
+
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     // Clean markdown if present
     text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-    
+
     const match = text.match(/\{[\s\S]*\}/);
     if (match) {
       const parsed = JSON.parse(match[0]);
@@ -447,7 +445,7 @@ const DISH_PATTERNS = {
 // Extract the canonical dish name from query
 function extractDishFromQuery(query) {
   const t = query.toLowerCase();
-  
+
   for (const [dishKey, pattern] of Object.entries(DISH_PATTERNS)) {
     if (pattern.test(t)) {
       // Return the most specific match
@@ -483,7 +481,7 @@ function extractIntentFallback(query) {
     followup_question: null,
     quick_replies: null
   };
-  
+
   // PRIORITY 1: Check for explicit dishes FIRST (before cuisine)
   const detectedDish = extractDishFromQuery(query);
   if (detectedDish) {
@@ -491,7 +489,7 @@ function extractIntentFallback(query) {
     intent.request_type = 'dish';
     console.log(`[INTENT] Detected dish: "${detectedDish}"`);
   }
-  
+
   // Borough detection
   const boroughMap = {
     'manhattan': 'Manhattan', 'midtown': 'Manhattan', 'downtown': 'Manhattan',
@@ -502,17 +500,17 @@ function extractIntentFallback(query) {
   for (const [key, val] of Object.entries(boroughMap)) {
     if (t.includes(key)) { intent.borough = val; break; }
   }
-  
+
   // Budget
   if (t.includes('cheap') || t.includes('budget')) intent.budget = 'cheap';
   else if (t.includes('nice') || t.includes('fancy') || t.includes('upscale')) intent.budget = 'nice';
-  
+
   // Dietary
   if (t.includes('vegetarian')) intent.dietary.push('vegetarian');
   if (t.includes('vegan')) intent.dietary.push('vegan');
   if (t.includes('halal')) intent.dietary.push('halal');
   if (t.includes('kosher')) intent.dietary.push('kosher');
-  
+
   // PRIORITY 2: Only check cuisines if no dish was found
   if (!intent.dish) {
     const cuisines = ['indian', 'chinese', 'thai', 'japanese', 'korean', 'mexican', 'italian', 'french', 'vietnamese', 'ethiopian', 'greek', 'turkish', 'lebanese', 'caribbean', 'asian', 'american', 'mediterranean'];
@@ -524,25 +522,24 @@ function extractIntentFallback(query) {
       }
     }
   }
-  
+
   // PRIORITY 3: If still nothing, try to extract from cleaned query
   if (!intent.dish && !intent.cuisine) {
     const cleaned = query.replace(/in (manhattan|brooklyn|queens|bronx|nyc)/gi, '')
-                         .replace(/\b(food|restaurant|restaurants|spots?|places?|best|good|find|me|the|a)\b/gi, '').trim();
+      .replace(/\b(food|restaurant|restaurants|spots?|places?|best|good|find|me|the|a)\b/gi, '').trim();
     if (cleaned.length > 2) {
       intent.dish = cleaned;
       intent.request_type = 'dish';
     }
   }
-  
+
   // Check if we need constraints
   if ((intent.dish || intent.cuisine) && !intent.borough) {
     intent.needs_constraint = true;
     intent.missing_constraint = 'borough';
-    intent.followup_question = 'Where in NYC?';
-    intent.quick_replies = ['Manhattan', 'Brooklyn', 'Queens', 'Anywhere'];
+    intent.followup_question = 'Where in NYC? (Manhattan, Brooklyn, Queens, Bronx, or Staten Island)';
   }
-  
+
   return intent;
 }
 
@@ -550,7 +547,7 @@ function extractIntentFallback(query) {
 async function extractIntent(query) {
   const geminiIntent = await extractIntentWithGemini(query);
   if (geminiIntent) return geminiIntent;
-  
+
   console.log('[INTENT] Gemini failed, using regex fallback');
   return extractIntentFallback(query);
 }
@@ -681,7 +678,7 @@ End with EXACTLY this line and nothing else after it: Reply "more" for different
 // =====================
 async function searchWithGemini(intent, excludeNames = []) {
   if (!GEMINI_API_KEY) return { results: [], error: 'No API key' };
-  
+
   const searchTarget = intent.dish || intent.cuisine || intent.dish_or_cuisine || intent.query || 'restaurant';
   const area = (intent.borough && !['any', 'Any', 'Anywhere'].includes(intent.borough)) ? intent.borough : 'NYC';
   const excludeClause = excludeNames.length > 0 ? excludeNames.join(', ') : '';
@@ -702,18 +699,18 @@ async function searchWithGemini(intent, excludeNames = []) {
       },
       { params: { key: GEMINI_API_KEY } }
     );
-    
+
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     console.log('[GEMINI SEARCH] Raw response:', text.substring(0, 400));
-    
+
     // Clean markdown
     text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-    
+
     const match = text.match(/\{[\s\S]*\}/);
     if (match) {
       let jsonText = match[0];
       let parsed;
-      
+
       try {
         parsed = JSON.parse(jsonText);
       } catch (parseErr) {
@@ -721,7 +718,7 @@ async function searchWithGemini(intent, excludeNames = []) {
         console.log('[GEMINI SEARCH] JSON truncated, attempting repair...');
         parsed = repairTruncatedJSON(jsonText);
       }
-      
+
       if (parsed && parsed.results) {
         const results = validateResults(parsed.results || [], isDishQuery, isDishQuery ? searchTarget : null);
         console.log(`[GEMINI SEARCH] Found ${results.length} valid restaurants for "${searchTarget}"`);
@@ -740,9 +737,9 @@ async function searchWithGemini(intent, excludeNames = []) {
 // =====================
 function validateResults(results, isDishQuery = false, dishName = null) {
   if (!Array.isArray(results)) return [];
-  
+
   const badWords = ['museum', 'tour', 'attraction', 'grocery', 'supermarket', 'food hall', 'market'];
-  
+
   // Build dish-specific evidence pattern if we have a dish name
   let dishEvidencePattern = null;
   if (dishName) {
@@ -761,12 +758,12 @@ function validateResults(results, isDishQuery = false, dishName = null) {
       dishEvidencePattern = new RegExp(dishLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     }
   }
-  
+
   return results.filter(r => {
     if (!r.name || r.name.length < 2) return false;
     if (!r.neighborhood && !r.borough) return false;
     if (badWords.some(w => r.name.toLowerCase().includes(w))) return false;
-    
+
     // For dish queries, require evidence for BOTH exact AND close matches
     // Only cuisine_fallback is allowed without evidence (and must be clearly labeled)
     if (isDishQuery) {
@@ -787,7 +784,7 @@ function validateResults(results, isDishQuery = false, dishName = null) {
         }
       }
     }
-    
+
     return true;
   }).map(r => ({
     name: r.name,
@@ -813,9 +810,9 @@ async function geminiFormatResponse(intent, results, note = null) {
   if (!results.length) {
     return `Couldn't find spots for "${intent.dish || intent.cuisine || 'that'}". Try a different area?`;
   }
-  
+
   if (!GEMINI_API_KEY) return formatResultsFallback(intent, results);
-  
+
   // Strip internal fields for formatting
   const cleanResults = results.slice(0, 5).map(r => ({
     name: r.name,
@@ -826,11 +823,11 @@ async function geminiFormatResponse(intent, results, note = null) {
     what_to_order: r.what_to_order,
     vibe: r.vibe
   }));
-  
+
   const userRequest = intent.dish || intent.cuisine || 'food';
   const area = intent.borough || 'NYC';
   const resultsJson = JSON.stringify(cleanResults);
-  
+
   const prompt = NYC_SCOUT_GEMINI_FORMATTER_PROMPT({ userRequest, area, note, resultsJson });
 
   try {
@@ -839,22 +836,22 @@ async function geminiFormatResponse(intent, results, note = null) {
       { contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: 1000, temperature: 0.3 } },
       { params: { key: GEMINI_API_KEY } }
     );
-    
+
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     // Strip any URLs that slipped through
     text = text.replace(/https?:\/\/[^\s)]+/g, '').replace(/\[source\]/gi, '');
-    
+
     if (text.length > 50) return text.trim();
   } catch (err) {
     console.error('[FORMAT] Gemini failed:', err.message);
   }
-  
+
   return formatResultsFallback(intent, results);
 }
 
 function formatResultsFallback(intent, results) {
   if (!results.length) return `Couldn't find spots for "${intent.dish || intent.cuisine}". Try a different area?`;
-  
+
   let text = '';
   results.slice(0, 5).forEach((r, i) => {
     text += `${i + 1}. ${(r.name || '').toUpperCase()}\n`;
@@ -877,7 +874,7 @@ async function spotlightRestaurant(restaurantName, context = null) {
   if (!GEMINI_API_KEY) {
     return { text: `I don't have info on ${restaurantName}. Try Google Maps!`, isSpotlight: true };
   }
-  
+
   const borough = context?.lastIntent?.borough || 'NYC';
   const prompt = `Research "${restaurantName}" restaurant in ${borough}.
 Return JSON: {"found":true,"name":"","neighborhood":"","borough":"","cuisine":"","price_range":"$20-40","vibe":"","known_for":[],"tips":"","why_good":""}
@@ -893,13 +890,13 @@ If not found: {"found":false}`;
       },
       { params: { key: GEMINI_API_KEY } }
     );
-    
+
     let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const match = text.match(/\{[\s\S]*\}/);
     if (match) {
       const info = JSON.parse(match[0]);
       if (!info.found) return { text: `Couldn't find "${restaurantName}" in NYC.`, isSpotlight: true };
-      
+
       let r = `Here's what I found about ${info.name}:\n\n`;
       r += `📍 ${info.neighborhood}, ${info.borough}\n`;
       r += `🍽️ ${info.cuisine} · ${info.price_range} · ${info.vibe}\n`;
@@ -925,20 +922,20 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
   if (spotlight.isSpotlight) {
     console.log(`[SPOTLIGHT] "${spotlight.restaurantName}"`);
     const result = await spotlightRestaurant(spotlight.restaurantName, context);
-    return { 
-      query, 
-      intent: { query, spotlight: true, restaurantName: spotlight.restaurantName }, 
-      results: [], 
-      count: 0, 
-      formattedResponse: result.text, 
-      needsConstraints: false, 
-      isSpotlight: true 
+    return {
+      query,
+      intent: { query, spotlight: true, restaurantName: spotlight.restaurantName },
+      results: [],
+      count: 0,
+      formattedResponse: result.text,
+      needsConstraints: false,
+      isSpotlight: true
     };
   }
-  
+
   // 2. Extract intent with Gemini
   let intent = await extractIntent(query);
-  
+
   // 3. Apply provided filters
   if (providedFilters) {
     if (providedFilters.borough) intent.borough = providedFilters.borough;
@@ -946,13 +943,13 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
     if (providedFilters.dish) intent.dish = providedFilters.dish;
     if (providedFilters.cuisine) intent.cuisine = providedFilters.cuisine;
   }
-  
+
   // 4. Apply profile defaults
   if (foodProfile) {
     if (!intent.borough && foodProfile.borough) intent.borough = foodProfile.borough;
     if (!intent.budget && foodProfile.budget) intent.budget = foodProfile.budget;
   }
-  
+
   // 5. Check if we need constraints (only if not skipping gate)
   if (!skipConstraintGate && intent.needs_constraint && intent.missing_constraint === 'borough') {
     return {
@@ -962,18 +959,14 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
       count: 0,
       needsConstraints: true,
       pendingFilters: { dish: intent.dish, cuisine: intent.cuisine },
-      constraintQuestion: intent.followup_question || 'Where in NYC?',
-      constraintReplies: (intent.quick_replies || ['Manhattan', 'Brooklyn', 'Queens', 'Anywhere']).map(r => ({
-        title: r,
-        payload: `BOROUGH_${r.toUpperCase().replace(' ', '_')}`
-      }))
+      constraintQuestion: intent.followup_question || 'Where in NYC? (Manhattan, Brooklyn, Queens, Bronx, or Staten Island)'
     };
   }
-  
+
   // 6. Search with Gemini (grounded web search)
   const excludeNames = context?.shownNames || [];
   const { results, note, error } = await searchWithGemini(intent, excludeNames);
-  
+
   // 7. Handle low/no results
   if (results.length === 0) {
     if (intent.borough && intent.borough !== 'any') {
@@ -997,7 +990,7 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
       formattedResponse: error || `Couldn't find spots for "${intent.dish || intent.cuisine}". Try something else?`
     };
   }
-  
+
   // 8. Handle low results (< 3) in specific borough
   if (results.length < 3 && intent.borough && intent.borough !== 'any') {
     const formatted = await geminiFormatResponse(intent, results);
@@ -1013,11 +1006,11 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
       lowResults: true
     };
   }
-  
+
   // 9. Format and return
   const top5 = results.slice(0, 5);
   let formatted = await geminiFormatResponse(intent, top5, note);
-  
+
   return {
     query,
     intent,
@@ -1039,35 +1032,26 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
 function formatRestaurantResults(searchResult) {
   if (searchResult.needsConstraints) {
     return {
-      text: searchResult.constraintQuestion || 'Where in NYC?',
-      replies: searchResult.constraintReplies || [],
+      text: searchResult.constraintQuestion || 'Where in NYC? (Manhattan, Brooklyn, Queens, Bronx, or Staten Island)',
       isQuestion: true,
       pendingFilters: searchResult.pendingFilters
     };
   }
-  
+
   if (searchResult.lowResults && searchResult.expandOption) {
     return {
-      text: searchResult.formattedResponse,
-      replies: [
-        { title: 'Yes, search all NYC', payload: 'BOROUGH_ANY' },
-        { title: 'Try different dish', payload: 'RESET_SEARCH' }
-      ],
+      text: `${searchResult.formattedResponse}\n\nWant me to search all of NYC? Or try a different dish?`,
       isQuestion: true
     };
   }
-  
+
   if (searchResult.lowResults) {
     return {
-      text: searchResult.formattedResponse,
-      replies: [
-        { title: 'Yes, check other boroughs', payload: 'BOROUGH_ANY' },
-        { title: 'These are fine', payload: 'KEEP_RESULTS' }
-      ],
+      text: `${searchResult.formattedResponse}\n\nWant me to search all of NYC? Or try a different dish?`,
       isQuestion: false
     };
   }
-  
+
   return {
     text: searchResult.formattedResponse || "What are you craving?",
     replies: [],
@@ -1095,7 +1079,7 @@ async function searchRestaurantsDB(filters, limit = 20) {
       .sort({ rating: -1, userRatingsTotal: -1 })
       .limit(limit)
       .toArray();
-      
+
     return results.map(r => ({
       name: r.name,
       fullAddress: r.fullAddress,
