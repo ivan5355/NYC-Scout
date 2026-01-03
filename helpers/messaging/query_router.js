@@ -253,9 +253,406 @@ function getEventFilters(result) {
   return null;
 }
 
+/* =====================
+   INTENT CLASSIFICATION WITH FILTER DETECTION
+   This is the new 3-step flow:
+   1. Classify query type (EVENT vs RESTAURANT)
+   2. Detect existing filters from the query
+   3. Generate prompts for missing filters
+===================== */
+
+async function classifyIntentAndFilters(userId, text) {
+  if (!text || text.trim().length === 0) {
+    return {
+      type: 'OTHER',
+      detectedFilters: {},
+      missingFilters: [],
+      filterPrompt: null
+    };
+  }
+
+  const t = text.toLowerCase().trim();
+  console.log(`[INTENT] Classifying intent: "${t}"`);
+
+  // Check follow-up patterns locally
+  if (FOLLOWUP_PATTERNS.some(p => p.test(t))) {
+    console.log(`[INTENT] Match: FOLLOWUP`);
+    return {
+      type: 'FOLLOWUP',
+      detectedFilters: {},
+      missingFilters: [],
+      filterPrompt: null
+    };
+  }
+
+  // Use Gemini for classification
+  if (GEMINI_API_KEY) {
+    return await classifyIntentWithGemini(text);
+  }
+
+  // Fallback: basic keyword-based classification
+  return fallbackIntentClassification(text);
+}
+
+async function classifyIntentWithGemini(text) {
+  const categories = loadEventCategories();
+  const categoryHelp = Object.entries(categories)
+    .map(([cat, keywords]) => `- ${cat}: ${keywords.slice(0, 10).join(', ')}`)
+    .join('\n');
+
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+
+  const prompt = `You are a query classifier for a NYC discovery bot. Analyze this message and return structured data.
+
+User message: "${text}"
+Today's date: ${todayStr}
+
+STEP 1 - CLASSIFY THE QUERY TYPE:
+Return ONE of these types:
+- "EVENT" - looking for events, activities, concerts, sports, things to do
+- "RESTAURANT" - looking for food, restaurants, where to eat, cuisines, dishes
+- "OTHER" - greetings, general questions, unrelated
+
+STEP 2 - DETECT EXISTING FILTERS:
+For EVENT queries, check for:
+- date: today, tonight, tomorrow, weekend, this week, next week, specific date, or null if not mentioned
+- borough: Manhattan, Brooklyn, Queens, Bronx, Staten Island, or null
+- price: free, budget, or null
+- category: Pick from: ${Object.keys(categories).join(', ')}
+- searchTerm: The specific thing they want (e.g., "comedy", "jazz", "soccer")
+
+For RESTAURANT queries, check for:
+- cuisine: The type of food (e.g., "thai", "italian", "sushi")
+- dish: Specific dish if mentioned (e.g., "pizza", "ramen")
+- borough: Manhattan, Brooklyn, Queens, Bronx, Staten Island, or null
+- budget: cheap, moderate, expensive, or null
+- vibe: casual, romantic, trendy, hidden gem, or null
+
+STEP 3 - IDENTIFY MISSING CRITICAL FILTERS:
+For EVENT: date and category/searchTerm are most important
+For RESTAURANT: cuisine/dish and borough are most important
+
+Return ONLY valid JSON:
+{
+  "type": "EVENT" or "RESTAURANT" or "OTHER",
+  "detectedFilters": {
+    // Include ALL detected filters here
+  },
+  "missingFilters": ["list", "of", "missing", "critical", "filters"],
+  "confidence": 0.0-1.0
+}
+
+Examples:
+- "jazz tonight in brooklyn" → EVENT, detected: {date: "tonight", borough: "Brooklyn", category: "music", searchTerm: "jazz"}, missing: []
+- "best sushi" → RESTAURANT, detected: {cuisine: "sushi"}, missing: ["borough"]
+- "things to do" → EVENT, detected: {}, missing: ["category", "date"]
+- "thai food manhattan" → RESTAURANT, detected: {cuisine: "thai", borough: "Manhattan"}, missing: []`;
+
+  try {
+    const response = await geminiClient.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 400, temperature: 0.1 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+
+    let resultText = response.data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+
+    // Clean markdown if present
+    if (resultText.startsWith('```')) {
+      resultText = resultText.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/i, '').trim();
+    }
+
+    try {
+      const parsed = JSON.parse(resultText);
+      const type = parsed.type?.toUpperCase();
+
+      // Validate against user text to prevent hallucination
+      const lowerText = text.toLowerCase();
+      const detectedFilters = parsed.detectedFilters || {};
+      const missingFilters = parsed.missingFilters || [];
+
+      // Verify date wasn't hallucinated
+      if (type === 'EVENT' && detectedFilters.date) {
+        const dateWords = ['today', 'tonight', 'tomorrow', 'weekend', 'week', 'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        const hasDateMention = dateWords.some(word => lowerText.includes(word));
+        if (!hasDateMention) {
+          detectedFilters.date = null;
+          if (!missingFilters.includes('date')) missingFilters.push('date');
+        }
+      }
+
+      // Verify borough wasn't hallucinated
+      if (detectedFilters.borough) {
+        const boroughWords = ['manhattan', 'brooklyn', 'queens', 'bronx', 'staten'];
+        const hasBoroughMention = boroughWords.some(word => lowerText.includes(word));
+        if (!hasBoroughMention) {
+          detectedFilters.borough = null;
+          if (!missingFilters.includes('borough')) missingFilters.push('borough');
+        }
+      }
+
+      // Generate appropriate filter prompt
+      const filterPrompt = generateFilterPrompt(type, detectedFilters, missingFilters);
+
+      console.log(`[INTENT] Type: ${type}, Detected:`, detectedFilters, 'Missing:', missingFilters);
+
+      return {
+        type: type || 'OTHER',
+        detectedFilters,
+        missingFilters,
+        filterPrompt,
+        confidence: parsed.confidence || 0.8
+      };
+    } catch (parseErr) {
+      console.error('[INTENT] JSON parse failed:', parseErr.message);
+      return fallbackIntentClassification(text);
+    }
+  } catch (err) {
+    console.error('[INTENT] Gemini classification failed:', err.message);
+    return fallbackIntentClassification(text);
+  }
+}
+
+function fallbackIntentClassification(text) {
+  const t = text.toLowerCase();
+
+  // Event keywords
+  const eventKeywords = ['event', 'concert', 'show', 'comedy', 'music', 'jazz', 'sports', 'game', 'match', 'party', 'festival', 'things to do', 'activities', 'happenings', 'tonight', 'theater', 'theatre', 'nightlife'];
+
+  // Restaurant keywords  
+  const foodKeywords = ['food', 'eat', 'restaurant', 'hungry', 'dinner', 'lunch', 'breakfast', 'brunch', 'sushi', 'pizza', 'ramen', 'thai', 'chinese', 'italian', 'mexican', 'indian', 'cuisine', 'dish', 'craving'];
+
+  const isEvent = eventKeywords.some(kw => t.includes(kw));
+  const isFood = foodKeywords.some(kw => t.includes(kw));
+
+  let type = 'OTHER';
+  if (isEvent && !isFood) type = 'EVENT';
+  else if (isFood && !isEvent) type = 'RESTAURANT';
+  else if (isEvent && isFood) type = 'OTHER'; // ambiguous
+
+  const detectedFilters = {};
+  const missingFilters = [];
+
+  // Basic filter detection
+  if (t.includes('tonight') || t.includes('today')) detectedFilters.date = 'today';
+  else if (t.includes('tomorrow')) detectedFilters.date = 'tomorrow';
+  else if (t.includes('weekend')) detectedFilters.date = 'weekend';
+  else if (type === 'EVENT') missingFilters.push('date');
+
+  if (t.includes('manhattan')) detectedFilters.borough = 'Manhattan';
+  else if (t.includes('brooklyn')) detectedFilters.borough = 'Brooklyn';
+  else if (t.includes('queens')) detectedFilters.borough = 'Queens';
+  else missingFilters.push('borough');
+
+  if (t.includes('free')) detectedFilters.price = 'free';
+
+  const filterPrompt = generateFilterPrompt(type, detectedFilters, missingFilters);
+
+  return { type, detectedFilters, missingFilters, filterPrompt, confidence: 0.5 };
+}
+
+/* =====================
+   FILTER PROMPT GENERATION
+===================== */
+
+function generateFilterPrompt(type, detectedFilters, missingFilters) {
+  if (!missingFilters || missingFilters.length === 0) {
+    return null; // All filters present, ready to search
+  }
+
+  if (type === 'EVENT') {
+    return generateEventFilterPrompt(detectedFilters, missingFilters);
+  } else if (type === 'RESTAURANT') {
+    return generateRestaurantFilterPrompt(detectedFilters, missingFilters);
+  }
+
+  return null;
+}
+
+function generateEventFilterPrompt(detectedFilters, missingFilters) {
+  const searchDesc = detectedFilters.searchTerm || detectedFilters.category || 'events';
+
+  // Build a summary of what we know
+  let knownParts = [];
+  if (detectedFilters.searchTerm) knownParts.push(`"${detectedFilters.searchTerm}"`);
+  if (detectedFilters.date) knownParts.push(detectedFilters.date);
+  if (detectedFilters.borough) knownParts.push(detectedFilters.borough);
+  if (detectedFilters.price === 'free') knownParts.push('free');
+
+  const summary = knownParts.length > 0 ? `Got it — ${knownParts.join(', ')}! ` : '';
+
+  // Prioritize what to ask for
+  const primaryMissing = missingFilters[0];
+
+  const eventRichPrompt = `🎪 NYC has hundreds of events!
+
+Tell me what you're looking for:
+
+📍 Location (Manhattan, Brooklyn, Queens...)
+📅 Date (tonight, this weekend, next week...)
+💰 Price (free, budget)
+✨ Type (music, comedy, art, nightlife, special...)
+
+Example: "Brooklyn, tonight, free comedy"`;
+
+  if (primaryMissing === 'date' || primaryMissing === 'category' || primaryMissing === 'searchTerm') {
+    return {
+      text: `${summary}${eventRichPrompt}`,
+      buttons: [
+        { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
+        { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
+        { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
+        { title: '🎵 Live music', payload: 'EVENT_CAT_music' },
+        { title: '😂 Comedy', payload: 'EVENT_CAT_comedy' },
+        { title: '🍻 Nightlife', payload: 'EVENT_CAT_nightlife' },
+        { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
+      ],
+      type: 'event_filter_request'
+    };
+  }
+
+  if (primaryMissing === 'borough') {
+    return {
+      text: `${summary}📍 Which area?`,
+      buttons: [
+        { title: 'Manhattan 🏙️', payload: 'EVENT_BOROUGH_MANHATTAN' },
+        { title: 'Brooklyn 🌉', payload: 'EVENT_BOROUGH_BROOKLYN' },
+        { title: 'Queens 🚇', payload: 'EVENT_BOROUGH_QUEENS' },
+        { title: 'Anywhere 🗽', payload: 'EVENT_BOROUGH_ANY' }
+      ],
+      type: 'event_filter_request'
+    };
+  }
+
+  // Default: ask for general preferences
+  return {
+    text: `${summary}${eventRichPrompt}`,
+    buttons: [
+      { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
+      { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
+      { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
+      { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
+    ],
+    type: 'event_filter_request'
+  };
+}
+
+function generateRestaurantFilterPrompt(detectedFilters, missingFilters) {
+  const cuisine = detectedFilters.cuisine || detectedFilters.dish || 'food';
+
+  // Build a summary of what we know  
+  let knownParts = [];
+  if (detectedFilters.cuisine) knownParts.push(detectedFilters.cuisine);
+  if (detectedFilters.dish) knownParts.push(detectedFilters.dish);
+  if (detectedFilters.borough) knownParts.push(detectedFilters.borough);
+  if (detectedFilters.budget) knownParts.push(detectedFilters.budget);
+
+  const summary = knownParts.length > 0 ? `Nice — ${knownParts.join(', ')}! ` : '';
+
+  // Prioritize what to ask for
+  const primaryMissing = missingFilters[0];
+
+  if (primaryMissing === 'cuisine' || primaryMissing === 'dish') {
+    return {
+      text: `${summary}🍽️ What are you craving?`,
+      buttons: [
+        { title: '🍜 Asian', payload: 'CUISINE_asian' },
+        { title: '🍕 Italian', payload: 'CUISINE_italian' },
+        { title: '🌮 Mexican', payload: 'CUISINE_mexican' },
+        { title: '🍔 American', payload: 'CUISINE_american' },
+        { title: '🍲 Indian', payload: 'CUISINE_indian' },
+        { title: '🥙 Middle Eastern', payload: 'CUISINE_middle_eastern' },
+        { title: '🎲 Surprise me', payload: 'CUISINE_surprise' }
+      ],
+      type: 'restaurant_filter_request'
+    };
+  }
+
+  if (primaryMissing === 'borough') {
+    const cuisineDisplay = summary ? '' : `${cuisine}! `;
+    return {
+      text: `${summary}📍 ${cuisineDisplay}Where in NYC?`,
+      buttons: [
+        { title: 'Manhattan 🏙️', payload: 'BOROUGH_MANHATTAN' },
+        { title: 'Brooklyn 🌉', payload: 'BOROUGH_BROOKLYN' },
+        { title: 'Queens 🚇', payload: 'BOROUGH_QUEENS' },
+        { title: 'Bronx 🏠', payload: 'BOROUGH_BRONX' },
+        { title: 'Anywhere 🗽', payload: 'BOROUGH_ANY' }
+      ],
+      type: 'restaurant_filter_request'
+    };
+  }
+
+  if (primaryMissing === 'budget') {
+    return {
+      text: `${summary}💰 What's your budget for ${cuisine}?`,
+      buttons: [
+        { title: '💸 Cheap', payload: 'BUDGET_$' },
+        { title: '🙂 Moderate', payload: 'BUDGET_$$' },
+        { title: '✨ Nice', payload: 'BUDGET_$$$' },
+        { title: '🤷 Any budget', payload: 'BUDGET_ANY' }
+      ],
+      type: 'restaurant_filter_request'
+    };
+  }
+
+  if (primaryMissing === 'vibe') {
+    return {
+      text: `${summary}✨ What vibe for ${cuisine}?`,
+      buttons: [
+        { title: '🍕 Casual', payload: 'VIBE_CASUAL' },
+        { title: '💕 Date night', payload: 'VIBE_DATE' },
+        { title: '🔥 Trendy', payload: 'VIBE_TRENDY' },
+        { title: '💎 Hidden gem', payload: 'VIBE_HIDDEN' }
+      ],
+      type: 'restaurant_filter_request'
+    };
+  }
+
+  // Default: comprehensive question
+  return {
+    text: `${summary}🍽️ Looking for ${cuisine}! Tell me more:\n\n📍 Area (Manhattan, Brooklyn...)\n💰 Budget (cheap, moderate, fancy)\n✨ Vibe (casual, date night, trendy)\n\nOr just say "surprise me" 🎲`,
+    buttons: null,
+    type: 'restaurant_filter_request'
+  };
+}
+
+/* =====================
+   HELPER TO CHECK IF READY TO SEARCH
+===================== */
+
+function isReadyToSearch(intentResult) {
+  if (!intentResult || intentResult.type === 'OTHER') return false;
+
+  const { type, missingFilters } = intentResult;
+
+  if (type === 'EVENT') {
+    // Events need at least a category/searchTerm OR we can default everything
+    return missingFilters.length === 0 ||
+      (intentResult.detectedFilters.searchTerm || intentResult.detectedFilters.category);
+  }
+
+  if (type === 'RESTAURANT') {
+    // Restaurants need at least a cuisine/dish
+    return intentResult.detectedFilters.cuisine || intentResult.detectedFilters.dish;
+  }
+
+  return false;
+}
+
 module.exports = {
   classifyQuery,
   getClassificationType,
   getEventFilters,
-  loadEventCategories
+  loadEventCategories,
+  // New exports for intent classification flow
+  classifyIntentAndFilters,
+  generateFilterPrompt,
+  generateEventFilterPrompt,
+  generateRestaurantFilterPrompt,
+  isReadyToSearch
 };

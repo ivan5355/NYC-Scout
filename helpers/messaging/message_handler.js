@@ -1,4 +1,10 @@
-const { classifyQuery, getClassificationType, getEventFilters } = require('./query_router');
+const {
+  classifyQuery,
+  getClassificationType,
+  getEventFilters,
+  classifyIntentAndFilters,
+  isReadyToSearch
+} = require('./query_router');
 const {
   getOrCreateProfile,
   updateProfile,
@@ -157,7 +163,7 @@ async function handleDM(body) {
 }
 
 /* =====================
-   MAIN DM PROCESSING
+   MAIN DM PROCESSING (with Intent Classification Flow)
    ===================== */
 async function processDM(senderId, messageText, payload, profile, context) {
   console.log(`Processing: ${messageText || payload}`);
@@ -178,14 +184,133 @@ async function processDM(senderId, messageText, payload, profile, context) {
   const modeHandled = await handleModeSelection(senderId, payload);
   if (modeHandled) return;
 
+  // =====================
+  // NEW INTENT CLASSIFICATION FLOW
+  // Step 1: Classify EVENT vs RESTAURANT
+  // Step 2: Detect existing filters
+  // Step 3: Ask for missing filters OR run search
+  // =====================
+
+  const intentResult = await classifyIntentAndFilters(senderId, messageText);
+  console.log(`[INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}`);
+
+  // Handle follow-up mode
+  if (intentResult.type === 'FOLLOWUP' && context?.lastCategory) {
+    if (context.lastCategory === 'EVENT' || context.lastCategory === 'FOOD_SEARCH' || context.lastCategory === 'RESTAURANT') {
+      // Continue with previous category
+      if (context.lastCategory === 'EVENT') {
+        return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context);
+      } else {
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+      }
+    }
+  }
+
+  // =====================
+  // EVENT FLOW
+  // =====================
+  if (intentResult.type === 'EVENT') {
+    const { detectedFilters, missingFilters, filterPrompt } = intentResult;
+
+    // Generic terms that should NOT be considered valid search terms
+    const genericEventTerms = ['events', 'event', 'things to do', 'activities', 'happenings', 'stuff', 'something', 'anything', 'what to do', 'whats happening', "what's happening"];
+
+    // Check if we have a SPECIFIC (non-generic) search term or category
+    const searchTerm = detectedFilters.searchTerm?.toLowerCase() || '';
+    const categoryName = detectedFilters.category?.toLowerCase() || '';
+
+    const hasSpecificTerm = searchTerm && !genericEventTerms.includes(searchTerm);
+    const hasSpecificCategory = categoryName && !['general', 'other', 'any', 'special'].includes(categoryName);
+
+    const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
+
+    // Only search immediately if we have a SPECIFIC term/category
+    if (hasSearchableTerm) {
+      // Ready to search - convert detected filters to event filters format
+      const eventFilters = {
+        date: detectedFilters.date ? { type: detectedFilters.date } : null,
+        borough: detectedFilters.borough || null,
+        price: detectedFilters.price || null,
+        category: detectedFilters.category || null,
+        searchTerm: detectedFilters.searchTerm || null
+      };
+
+      return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context);
+    }
+
+    // Need to ask for filters - use filterPrompt if available, otherwise generate default prompt
+    await updateContext(senderId, {
+      pendingType: 'event_gate',
+      pendingQuery: messageText,
+      pendingFilters: detectedFilters,
+      lastCategory: 'EVENT'
+    });
+
+    if (filterPrompt) {
+      await sendMessage(senderId, filterPrompt.text, filterPrompt.buttons);
+    } else {
+      // Fallback: default event filter prompt
+      const defaultPrompt = `🎪 NYC has hundreds of events!
+
+Tell me what you're looking for:
+
+📍 Location (Manhattan, Brooklyn, Queens...)
+📅 Date (tonight, this weekend, next week...)
+💰 Price (free, budget)
+✨ Type (music, comedy, art, nightlife, special...)
+
+Example: "Brooklyn, tonight, free comedy"`;
+      const defaultButtons = [
+        { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
+        { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
+        { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
+        { title: '🎵 Live music', payload: 'EVENT_CAT_music' },
+        { title: '😂 Comedy', payload: 'EVENT_CAT_comedy' },
+        { title: '🍻 Nightlife', payload: 'EVENT_CAT_nightlife' },
+        { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
+      ];
+      await sendMessage(senderId, defaultPrompt, defaultButtons);
+    }
+    return;
+  }
+
+  // =====================
+  // RESTAURANT FLOW
+  // =====================
+  if (intentResult.type === 'RESTAURANT') {
+    const { detectedFilters, missingFilters, filterPrompt } = intentResult;
+
+    // Check if we have enough info to search
+    const hasCuisineOrDish = detectedFilters.cuisine || detectedFilters.dish;
+
+    if (hasCuisineOrDish) {
+      // We have cuisine/dish - pass to restaurant handler which will ask for remaining filters
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+    }
+
+    // Need to ask for cuisine/dish first
+    if (filterPrompt) {
+      await updateContext(senderId, {
+        pendingType: 'restaurant_gate',
+        pendingQuery: messageText,
+        pendingFilters: detectedFilters,
+        lastCategory: 'FOOD_SEARCH'
+      });
+
+      await sendMessage(senderId, filterPrompt.text, filterPrompt.buttons);
+      return;
+    }
+
+    // Fallback to existing handler
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+  }
+
+  // =====================
+  // FALLBACK TO ORIGINAL CLASSIFICATION (for edge cases)
+  // =====================
   const classificationResult = await classifyQuery(senderId, messageText);
   let category = getClassificationType(classificationResult);
   let eventFilters = getEventFilters(classificationResult);
-
-  if (category === 'FOLLOWUP' && context?.lastCategory) {
-    category = context.lastCategory;
-    eventFilters = context?.lastEventFilters || null;
-  }
 
   if (category === 'FOOD_SEARCH' || category === 'FOOD_SPOTLIGHT' || category === 'RESTAURANT') {
     return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
@@ -323,6 +448,100 @@ async function processDMForTest(senderId, messageText, payload = null) {
     return { reply: answer, category: 'FOOD_QUESTION' };
   }
 
+  // =====================
+  // NEW INTENT CLASSIFICATION FLOW IN TEST MODE
+  // =====================
+  const intentResult = await classifyIntentAndFilters(senderId, messageText);
+  console.log(`[TEST INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}`);
+
+  // Handle follow-up mode
+  if (intentResult.type === 'FOLLOWUP' && context?.lastCategory) {
+    if (context.lastCategory === 'EVENT' || context.lastCategory === 'FOOD_SEARCH' || context.lastCategory === 'RESTAURANT') {
+      if (context.lastCategory === 'EVENT') {
+        return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context, true);
+      } else {
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+      }
+    }
+  }
+
+  // EVENT FLOW
+  if (intentResult.type === 'EVENT') {
+    const { detectedFilters, missingFilters, filterPrompt } = intentResult;
+    const genericEventTerms = ['events', 'event', 'things to do', 'activities', 'happenings', 'stuff', 'something', 'anything', 'what to do', 'whats happening', "what's happening"];
+    const searchTerm = detectedFilters.searchTerm?.toLowerCase() || '';
+    const categoryName = detectedFilters.category?.toLowerCase() || '';
+    const hasSpecificTerm = searchTerm && !genericEventTerms.includes(searchTerm);
+    const hasSpecificCategory = categoryName && !['general', 'other', 'any'].includes(categoryName);
+    const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
+
+    if (hasSearchableTerm) {
+      const eventFilters = {
+        date: detectedFilters.date ? { type: detectedFilters.date } : null,
+        borough: detectedFilters.borough || null,
+        price: detectedFilters.price || null,
+        category: detectedFilters.category || null,
+        searchTerm: detectedFilters.searchTerm || null
+      };
+      return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context, true);
+    }
+
+    // Need to ask for filters
+    await updateContext(senderId, {
+      pendingType: 'event_gate',
+      pendingQuery: messageText,
+      pendingFilters: detectedFilters,
+      lastCategory: 'EVENT'
+    });
+
+    if (filterPrompt) {
+      return { reply: filterPrompt.text, buttons: filterPrompt.buttons, category: 'EVENT' };
+    } else {
+      const defaultPrompt = `🎪 NYC has hundreds of events!
+
+Tell me what you're looking for:
+
+📍 Location (Manhattan, Brooklyn, Queens...)
+📅 Date (tonight, this weekend, next week...)
+💰 Price (free, budget)
+✨ Type (music, comedy, art, nightlife, special...)
+
+Example: "Brooklyn, tonight, free comedy"`;
+      const defaultButtons = [
+        { title: '🌙 Tonight', payload: 'EVENT_DATE_today' },
+        { title: '📅 This weekend', payload: 'EVENT_DATE_weekend' },
+        { title: '🆓 Free stuff', payload: 'EVENT_PRICE_free' },
+        { title: '🎵 Live music', payload: 'EVENT_CAT_music' },
+        { title: '😂 Comedy', payload: 'EVENT_CAT_comedy' },
+        { title: '🍻 Nightlife', payload: 'EVENT_CAT_nightlife' },
+        { title: '🎲 Surprise me', payload: 'EVENT_DATE_any' }
+      ];
+      return { reply: defaultPrompt, buttons: defaultButtons, category: 'EVENT' };
+    }
+  }
+
+  // RESTAURANT FLOW
+  if (intentResult.type === 'RESTAURANT') {
+    const { detectedFilters, missingFilters, filterPrompt } = intentResult;
+    const hasCuisineOrDish = detectedFilters.cuisine || detectedFilters.dish;
+
+    if (hasCuisineOrDish) {
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+    }
+
+    if (filterPrompt) {
+      await updateContext(senderId, {
+        pendingType: 'restaurant_gate',
+        pendingQuery: messageText,
+        pendingFilters: detectedFilters,
+        lastCategory: 'FOOD_SEARCH'
+      });
+      return { reply: filterPrompt.text, buttons: filterPrompt.buttons, category: 'RESTAURANT' };
+    }
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+  }
+
+  // FALLBACK TO OLD CLASSIFICATION
   const classificationResult = await classifyQuery(senderId, messageText);
   let category = getClassificationType(classificationResult);
   let eventFilters = getEventFilters(classificationResult);
