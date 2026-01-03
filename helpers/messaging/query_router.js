@@ -330,8 +330,8 @@ For RESTAURANT queries, check for:
 - vibe: casual, romantic, trendy, hidden gem, or null
 
 STEP 3 - IDENTIFY MISSING CRITICAL FILTERS:
-For EVENT: date and category/searchTerm are most important
-For RESTAURANT: cuisine/dish and borough are most important
+For EVENT: borough, date, and category/searchTerm are all required.
+For RESTAURANT: cuisine/dish and borough are most important.
 
 Return ONLY valid JSON:
 {
@@ -346,7 +346,7 @@ Return ONLY valid JSON:
 Examples:
 - "jazz tonight in brooklyn" → EVENT, detected: {date: "tonight", borough: "Brooklyn", category: "music", searchTerm: "jazz"}, missing: []
 - "best sushi" → RESTAURANT, detected: {cuisine: "sushi"}, missing: ["borough"]
-- "things to do" → EVENT, detected: {}, missing: ["category", "date"]
+- "things to do" → EVENT, detected: {}, missing: ["borough", "date"]
 - "thai food manhattan" → RESTAURANT, detected: {cuisine: "thai", borough: "Manhattan"}, missing: []`;
 
   try {
@@ -487,17 +487,17 @@ function generateEventFilterPrompt(detectedFilters, missingFilters) {
   // If we have a search term, acknowledge it and ask only for missing filters
   if (searchTerm && missingFilters.length > 0) {
     const summary = `🎪 ${searchTerm}! `;
-    
+
     // Build a focused prompt for just the missing filters
     let missingPrompts = [];
-    if (missingFilters.includes('date') && !detectedFilters.date) {
+    if (!detectedFilters.date) {
       missingPrompts.push('📅 When? (tonight, this weekend, next week...)');
     }
-    if (missingFilters.includes('borough') && !detectedFilters.borough) {
-      missingPrompts.push('📍 Where? (Manhattan, Brooklyn, Queens...)');
+    if (!detectedFilters.borough) {
+      missingPrompts.push('📍 Where? (Manhattan, Brooklyn, Queens, Bronx, or Staten Island)');
     }
-    if (missingFilters.includes('price') && !detectedFilters.price) {
-      missingPrompts.push('💰 Budget? (free, any)');
+    if (!searchTerm) {
+      missingPrompts.push('✨ What category? (music, comedy, art, nightlife, sports...)');
     }
 
     if (missingPrompts.length > 0) {
@@ -514,10 +514,9 @@ function generateEventFilterPrompt(detectedFilters, missingFilters) {
 
 Tell me what you're looking for in one message:
 
-📍 Location (Manhattan, Brooklyn, Queens...)
-📅 Date (tonight, this weekend, next week...)
-💰 Price (free, budget, any)
-✨ Type (music, comedy, art, nightlife, sports...)
+📍 Where? (Manhattan, Brooklyn, Queens...)
+📅 When? (tonight, this weekend, next week...)
+✨ What category? (music, comedy, art, nightlife, sports...)
 
 Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
 
@@ -542,7 +541,7 @@ function generateRestaurantFilterPrompt(detectedFilters, missingFilters) {
   // If we have a cuisine/dish, acknowledge it and ask only for missing filters
   if (cuisine && missingFilters.length > 0) {
     const summary = `🍜 ${cuisine}! `;
-    
+
     // Build a focused prompt for just the missing filters
     let missingPrompts = [];
     if (missingFilters.includes('borough') && !detectedFilters.borough) {
@@ -660,7 +659,7 @@ Return ONLY valid JSON:
 
     const parsed = JSON.parse(resultText);
     console.log(`[FILTER_PARSE] Gemini parsed filters:`, parsed);
-    
+
     return {
       date: parsed.date ? { type: parsed.date } : null,
       borough: parsed.borough || null,

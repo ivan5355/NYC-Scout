@@ -269,32 +269,20 @@ async function processDM(senderId, messageText, payload, profile, context) {
   }
 
   // =====================
-  // EVENT FLOW
+  // EVENT FLOW (works like restaurant flow - always ask for missing filters)
   // =====================
   if (intentResult.type === 'EVENT') {
     const { detectedFilters, missingFilters, filterPrompt } = intentResult;
 
-    // Generic terms that should NOT be considered valid search terms
-    const genericEventTerms = ['events', 'event', 'things to do', 'activities', 'happenings', 'stuff', 'something', 'anything', 'what to do', 'whats happening', "what's happening"];
-
-    // Check if we have a SPECIFIC (non-generic) search term or category
-    const searchTerm = detectedFilters.searchTerm?.toLowerCase() || '';
-    const categoryName = detectedFilters.category?.toLowerCase() || '';
-
-    const hasSpecificTerm = searchTerm && !genericEventTerms.includes(searchTerm);
-    const hasSpecificCategory = categoryName && !['general', 'other', 'any', 'special'].includes(categoryName);
-
-    const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
-
-    // Check if we have the key filters (date and borough)
+    // Check if we have the key filters (date and borough) - ALWAYS require these
     const hasDate = !!detectedFilters.date;
     const hasBorough = !!detectedFilters.borough;
-    const hasCriticalFilters = hasDate || hasBorough;
 
-    // Only search immediately if we have a SPECIFIC term AND at least one critical filter (date or borough)
-    // OR if user provided all filters
-    if (hasSearchableTerm && hasCriticalFilters) {
-      // Ready to search - convert detected filters to event filters format
+    // Get search term or category if provided
+    const searchTerm = detectedFilters.searchTerm || detectedFilters.category || null;
+
+    // If we have BOTH date AND borough, we're ready to search
+    if (hasDate && hasBorough) {
       const eventFilters = {
         date: detectedFilters.date ? { type: detectedFilters.date } : null,
         borough: detectedFilters.borough || null,
@@ -306,7 +294,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
       return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context);
     }
 
-    // Need to ask for filters - save what we detected and ask for more
+    // Save what we detected and ask for missing filters
     await updateContext(senderId, {
       pendingType: 'event_gate',
       pendingQuery: messageText,
@@ -314,22 +302,57 @@ async function processDM(senderId, messageText, payload, profile, context) {
       lastCategory: 'EVENT'
     });
 
+    // If we have a pre-generated prompt from the router, use it
     if (filterPrompt) {
       await sendMessage(senderId, filterPrompt.text);
+      return;
+    }
+
+    // Fallback manual prompts (using Where, When, What category terminology)
+    let promptText;
+    if (searchTerm && !hasDate && !hasBorough) {
+      promptText = `🎪 ${searchTerm}! NYC has a lot going on.
+
+Tell me:
+📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
+📅 When? (tonight, this weekend, next week...)
+
+Example: "Brooklyn this weekend" or "Manhattan tonight"`;
+    } else if (searchTerm && hasDate && !hasBorough) {
+      promptText = `🎪 ${searchTerm} ${detectedFilters.date}! 
+
+📍 Where? (Manhattan, Brooklyn, Queens, Bronx, Staten Island, or "all NYC")`;
+    } else if (searchTerm && !hasDate && hasBorough) {
+      promptText = `🎪 ${searchTerm} in ${detectedFilters.borough}!
+
+📅 When? (tonight, tomorrow, this weekend, next week...)`;
+    } else if (!searchTerm && hasDate && !hasBorough) {
+      promptText = `🎪 Events ${detectedFilters.date}!
+
+📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
+✨ What category? (music, comedy, art, sports...)
+
+Example: "comedy in Brooklyn" or "Manhattan music"`;
+    } else if (!searchTerm && !hasDate && hasBorough) {
+      promptText = `🎪 Events in ${detectedFilters.borough}!
+
+📅 When? (tonight, this weekend, next week...)
+✨ What category? (music, comedy, art, sports...)
+
+Example: "comedy this weekend" or "music tonight"`;
     } else {
-      // Fallback: default event filter prompt
-      const defaultPrompt = `🎪 NYC has hundreds of events!
+      promptText = `🎪 NYC has hundreds of events!
 
-Tell me what you're looking for in one message:
+Tell me what you're looking for:
 
-📍 Location (Manhattan, Brooklyn, Queens...)
-📅 Date (tonight, this weekend, next week...)
-💰 Price (free, budget, any)
-✨ Type (music, comedy, art, nightlife, sports...)
+📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
+📅 When? (tonight, this weekend, next week...)
+✨ What category? (music, comedy, art, nightlife, sports...)
 
 Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
-      await sendMessage(senderId, defaultPrompt);
     }
+
+    await sendMessage(senderId, promptText);
     return;
   }
 
@@ -495,23 +518,19 @@ async function processDMForTest(senderId, messageText, payload = null) {
     }
   }
 
-  // EVENT FLOW
+  // EVENT FLOW (works like restaurant flow - always ask for missing filters)
   if (intentResult.type === 'EVENT') {
     const { detectedFilters, missingFilters, filterPrompt } = intentResult;
-    const genericEventTerms = ['events', 'event', 'things to do', 'activities', 'happenings', 'stuff', 'something', 'anything', 'what to do', 'whats happening', "what's happening"];
-    const searchTerm = detectedFilters.searchTerm?.toLowerCase() || '';
-    const categoryName = detectedFilters.category?.toLowerCase() || '';
-    const hasSpecificTerm = searchTerm && !genericEventTerms.includes(searchTerm);
-    const hasSpecificCategory = categoryName && !['general', 'other', 'any', 'special'].includes(categoryName);
-    const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
 
-    // Check if we have the key filters (date and borough)
+    // Check if we have the key filters (date and borough) - ALWAYS require these
     const hasDate = !!detectedFilters.date;
     const hasBorough = !!detectedFilters.borough;
-    const hasCriticalFilters = hasDate || hasBorough;
 
-    // Only search immediately if we have a SPECIFIC term AND at least one critical filter
-    if (hasSearchableTerm && hasCriticalFilters) {
+    // Get search term or category if provided
+    const searchTerm = detectedFilters.searchTerm || detectedFilters.category || null;
+
+    // If we have BOTH date AND borough, we're ready to search
+    if (hasDate && hasBorough) {
       const eventFilters = {
         date: detectedFilters.date ? { type: detectedFilters.date } : null,
         borough: detectedFilters.borough || null,
@@ -522,7 +541,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
       return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context, true);
     }
 
-    // Need to ask for filters - save what we detected
+    // Save what we detected and ask for missing filters
     await updateContext(senderId, {
       pendingType: 'event_gate',
       pendingQuery: messageText,
@@ -530,21 +549,56 @@ async function processDMForTest(senderId, messageText, payload = null) {
       lastCategory: 'EVENT'
     });
 
+    // If we have a pre-generated prompt from the router, use it
     if (filterPrompt) {
-      return { reply: filterPrompt.text, category: 'EVENT' };
+      return { reply: filterPrompt.text, buttons: null, category: 'EVENT' };
+    }
+
+    // Fallback manual prompts
+    let promptText;
+    if (searchTerm && !hasDate && !hasBorough) {
+      promptText = `🎪 ${searchTerm}! NYC has a lot going on.
+
+Tell me:
+📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
+📅 When? (tonight, this weekend, next week...)
+
+Example: "Brooklyn this weekend" or "Manhattan tonight"`;
+    } else if (searchTerm && hasDate && !hasBorough) {
+      promptText = `🎪 ${searchTerm} ${detectedFilters.date}! 
+
+📍 Where? (Manhattan, Brooklyn, Queens, Bronx, Staten Island, or "all NYC")`;
+    } else if (searchTerm && !hasDate && hasBorough) {
+      promptText = `🎪 ${searchTerm} in ${detectedFilters.borough}!
+
+📅 When? (tonight, tomorrow, this weekend, next week...)`;
+    } else if (!searchTerm && hasDate && !hasBorough) {
+      promptText = `🎪 Events ${detectedFilters.date}!
+
+📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
+✨ What category? (music, comedy, art, sports...)
+
+Example: "comedy in Brooklyn" or "Manhattan music"`;
+    } else if (!searchTerm && !hasDate && hasBorough) {
+      promptText = `🎪 Events in ${detectedFilters.borough}!
+
+📅 When? (tonight, this weekend, next week...)
+✨ What category? (music, comedy, art, sports...)
+
+Example: "comedy this weekend" or "music tonight"`;
     } else {
-      const defaultPrompt = `🎪 NYC has hundreds of events!
+      promptText = `🎪 NYC has hundreds of events!
 
-Tell me what you're looking for in one message:
+Tell me what you're looking for:
 
-📍 Location (Manhattan, Brooklyn, Queens...)
-📅 Date (tonight, this weekend, next week...)
-💰 Price (free, budget, any)
-✨ Type (music, comedy, art, nightlife, sports...)
+📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
+📅 When? (tonight, this weekend, next week...)
+✨ What category? (music, comedy, art, nightlife, sports...)
 
 Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
-      return { reply: defaultPrompt, buttons: null, category: 'EVENT' };
     }
+
+    return { reply: promptText, buttons: null, category: 'EVENT' };
   }
 
   // RESTAURANT FLOW
