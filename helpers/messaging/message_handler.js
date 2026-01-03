@@ -38,6 +38,38 @@ const {
 const { handleSocialDM } = require('./social_handler');
 
 /* =====================
+   MESSAGE DEDUPLICATION
+   Instagram can send the same webhook multiple times
+===================== */
+const processedMessages = new Map();
+const MESSAGE_DEDUP_TTL = 60000; // 60 seconds
+
+function getMessageId(body) {
+  const messaging = body?.entry?.[0]?.messaging?.[0];
+  return messaging?.message?.mid || messaging?.postback?.mid || null;
+}
+
+function isDuplicateMessage(messageId) {
+  if (!messageId) return false;
+  
+  // Clean up old entries
+  const now = Date.now();
+  for (const [id, timestamp] of processedMessages) {
+    if (now - timestamp > MESSAGE_DEDUP_TTL) {
+      processedMessages.delete(id);
+    }
+  }
+  
+  if (processedMessages.has(messageId)) {
+    console.log(`[DEDUP] Skipping duplicate message: ${messageId}`);
+    return true;
+  }
+  
+  processedMessages.set(messageId, now);
+  return false;
+}
+
+/* =====================
    CONSTRAINT GATE HANDLER
 ===================== */
 async function handleConstraintResponse(senderId, payload, profile, context) {
@@ -111,6 +143,10 @@ async function handleModeSelection(senderId, payload, returnResult = false) {
 async function handleDM(body) {
   const messaging = body?.entry?.[0]?.messaging?.[0];
   if (!messaging || messaging.message?.is_echo) return;
+
+  // Deduplicate webhook calls - Instagram can send the same message multiple times
+  const messageId = getMessageId(body);
+  if (isDuplicateMessage(messageId)) return;
 
   const senderId = getSenderId(body);
   if (!senderId) return;
@@ -214,6 +250,9 @@ async function processDM(senderId, messageText, payload, profile, context) {
       console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
     }
+    
+    // No filters parsed - treat as a new query, clear pending state
+    await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
   }
 
   // =====================
@@ -423,6 +462,9 @@ async function processDMForTest(senderId, messageText, payload = null) {
       console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, true);
     }
+    
+    // No filters parsed - treat as a new query, clear pending state
+    await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
   }
 
   if (context?.pendingType === 'restaurant_preferences' && messageText && !payload) {
