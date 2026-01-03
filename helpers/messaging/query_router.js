@@ -607,6 +607,113 @@ function isReadyToSearch(intentResult) {
   return false;
 }
 
+/* =====================
+   PARSE EVENT FILTERS FROM TEXT (using Gemini)
+   Used when user responds to event_gate with filters like "Brooklyn this weekend"
+===================== */
+
+async function parseEventFiltersWithGemini(text) {
+  if (!GEMINI_API_KEY) {
+    return parseEventFiltersFallback(text);
+  }
+
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+
+  const prompt = `Extract event search filters from this user message. Today is ${todayStr}.
+
+User message: "${text}"
+
+Extract these filters if mentioned:
+- date: "today", "tonight", "tomorrow", "weekend", "this_week", "next_week", or null
+- borough: "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "any", or null
+- price: "free", "budget", or null
+
+Handle variations like:
+- "bk" or "bklyn" → Brooklyn
+- "wknd" or "this wknd" → weekend  
+- "tmrw" → tomorrow
+- "anywhere" or "any area" → "any" for borough
+
+Return ONLY valid JSON:
+{
+  "date": "weekend" or null,
+  "borough": "Brooklyn" or null,
+  "price": "free" or null
+}`;
+
+  try {
+    const response = await geminiClient.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 100, temperature: 0.1 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+
+    let resultText = response.data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+
+    if (resultText.startsWith('```')) {
+      resultText = resultText.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/i, '').trim();
+    }
+
+    const parsed = JSON.parse(resultText);
+    console.log(`[FILTER_PARSE] Gemini parsed filters:`, parsed);
+    
+    return {
+      date: parsed.date ? { type: parsed.date } : null,
+      borough: parsed.borough || null,
+      price: parsed.price || null
+    };
+  } catch (err) {
+    console.error('[FILTER_PARSE] Gemini parsing failed:', err.message);
+    return parseEventFiltersFallback(text);
+  }
+}
+
+function parseEventFiltersFallback(text) {
+  const textLower = text.toLowerCase();
+  const filters = {};
+
+  // Parse date
+  if (textLower.includes('today') || textLower.includes('tonight')) {
+    filters.date = { type: 'today' };
+  } else if (textLower.includes('tomorrow') || textLower.includes('tmrw')) {
+    filters.date = { type: 'tomorrow' };
+  } else if (textLower.includes('weekend') || textLower.includes('wknd')) {
+    filters.date = { type: 'weekend' };
+  } else if (textLower.includes('next week')) {
+    filters.date = { type: 'next_week' };
+  } else if (textLower.includes('this week')) {
+    filters.date = { type: 'this_week' };
+  }
+
+  // Parse borough
+  if (textLower.includes('manhattan') || textLower.includes('manhatten')) {
+    filters.borough = 'Manhattan';
+  } else if (textLower.includes('brooklyn') || textLower.includes('bk') || textLower.includes('bklyn')) {
+    filters.borough = 'Brooklyn';
+  } else if (textLower.includes('queens')) {
+    filters.borough = 'Queens';
+  } else if (textLower.includes('bronx')) {
+    filters.borough = 'Bronx';
+  } else if (textLower.includes('staten')) {
+    filters.borough = 'Staten Island';
+  } else if (textLower.includes('anywhere') || textLower.includes('any area')) {
+    filters.borough = 'any';
+  }
+
+  // Parse price
+  if (textLower.includes('free')) {
+    filters.price = 'free';
+  } else if (textLower.includes('cheap') || textLower.includes('budget')) {
+    filters.price = 'budget';
+  }
+
+  return filters;
+}
+
 module.exports = {
   classifyQuery,
   getClassificationType,
@@ -617,5 +724,6 @@ module.exports = {
   generateFilterPrompt,
   generateEventFilterPrompt,
   generateRestaurantFilterPrompt,
-  isReadyToSearch
+  isReadyToSearch,
+  parseEventFiltersWithGemini
 };

@@ -3,7 +3,8 @@ const {
   getClassificationType,
   getEventFilters,
   classifyIntentAndFilters,
-  isReadyToSearch
+  isReadyToSearch,
+  parseEventFiltersWithGemini
 } = require('./query_router');
 const {
   getOrCreateProfile,
@@ -192,6 +193,27 @@ async function processDM(senderId, messageText, payload, profile, context) {
       await sendMessage(senderId, result.reply, result.buttons);
     }
     return;
+  }
+
+  // Handle event_gate text responses (user responding with filters like "Brooklyn this weekend")
+  if (context?.pendingType === 'event_gate' && messageText && !payload) {
+    console.log(`[EVENT_GATE] Parsing text preferences with Gemini: "${messageText}"`);
+    const pendingFilters = { ...(context.pendingFilters || {}) };
+    const pendingQuery = context.pendingQuery || '';
+
+    // Use Gemini to parse the filters
+    const parsedFilters = await parseEventFiltersWithGemini(messageText);
+    
+    // Merge parsed filters with pending filters (pending has searchTerm/category)
+    if (parsedFilters.date) pendingFilters.date = parsedFilters.date;
+    if (parsedFilters.borough) pendingFilters.borough = parsedFilters.borough;
+    if (parsedFilters.price) pendingFilters.price = parsedFilters.price;
+
+    // If we parsed at least one new filter, run the search
+    if (parsedFilters.date || parsedFilters.borough || parsedFilters.price) {
+      console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
+      return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
+    }
   }
 
   // =====================
@@ -384,53 +406,21 @@ async function processDMForTest(senderId, messageText, payload = null) {
 
   // Handle event_gate text responses (user types instead of clicking buttons)
   if (context?.pendingType === 'event_gate' && messageText && !payload) {
-    console.log(`[EVENT_GATE] Parsing text preferences: "${messageText}"`);
+    console.log(`[EVENT_GATE] Parsing text preferences with Gemini: "${messageText}"`);
     const pendingFilters = { ...(context.pendingFilters || {}) };
     const pendingQuery = context.pendingQuery || '';
-    const textLower = messageText.toLowerCase();
 
-    // Parse date from text
-    if (textLower.includes('today') || textLower.includes('tonight')) {
-      pendingFilters.date = { type: 'today' };
-    } else if (textLower.includes('tomorrow')) {
-      pendingFilters.date = { type: 'tomorrow' };
-    } else if (textLower.includes('weekend')) {
-      pendingFilters.date = { type: 'weekend' };
-    } else if (textLower.includes('next week')) {
-      pendingFilters.date = { type: 'next_week' };
-    } else if (textLower.includes('this week')) {
-      pendingFilters.date = { type: 'this_week' };
-    } else if (textLower.includes('anytime') || textLower.includes('any time') || textLower.includes('whenever')) {
-      pendingFilters.date = { type: 'any' };
-    }
-
-    // Parse borough from text (handle common typos)
-    if (textLower.includes('manhattan') || textLower.includes('manhatten')) {
-      pendingFilters.borough = 'Manhattan';
-    } else if (textLower.includes('brooklyn')) {
-      pendingFilters.borough = 'Brooklyn';
-    } else if (textLower.includes('queens')) {
-      pendingFilters.borough = 'Queens';
-    } else if (textLower.includes('bronx')) {
-      pendingFilters.borough = 'Bronx';
-    } else if (textLower.includes('staten')) {
-      pendingFilters.borough = 'Staten Island';
-    } else if (textLower.includes('anywhere') || textLower.includes('any area') || textLower.includes('surprise')) {
-      pendingFilters.borough = 'any';
-    }
-
-    // Parse price from text
-    if (textLower.includes('free')) {
-      pendingFilters.price = 'free';
-    } else if (textLower.includes('cheap') || textLower.includes('budget')) {
-      pendingFilters.price = 'budget';
-    } else if (textLower.includes('any price') || textLower.includes('any budget')) {
-      pendingFilters.price = 'any';
-    }
+    // Use Gemini to parse the filters
+    const parsedFilters = await parseEventFiltersWithGemini(messageText);
+    
+    // Merge parsed filters with pending filters (pending has searchTerm/category)
+    if (parsedFilters.date) pendingFilters.date = parsedFilters.date;
+    if (parsedFilters.borough) pendingFilters.borough = parsedFilters.borough;
+    if (parsedFilters.price) pendingFilters.price = parsedFilters.price;
 
     // If we parsed at least one filter, run the search
-    if (pendingFilters.date || pendingFilters.borough || pendingFilters.price) {
-      console.log(`[EVENT_GATE] Parsed filters:`, JSON.stringify(pendingFilters));
+    if (parsedFilters.date || parsedFilters.borough || parsedFilters.price) {
+      console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, true);
     }
   }
