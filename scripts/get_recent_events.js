@@ -5,6 +5,8 @@
  * 1. NYC Open Data (Permitted Events)
  * 2. NYC Parks Events
  * 3. Eventbrite NYC
+ * 4. Ticketmaster
+ * 5. Time Out NYC
  * 
  * Runs periodically (cron or manual) to keep events fresh.
  * Deletes old events and inserts new ones.
@@ -40,6 +42,17 @@ const NYC_PARKS_EVENTS_URL = 'https://www.nycgovparks.org/xml/events_300_rss.jso
 const EVENTBRITE_BASE_URL = "https://www.eventbrite.com/d/ny--new-york/events/";
 const EVENTBRITE_MAX_PAGES = 10;
 const CONCURRENCY = 2;
+
+// Time Out NYC
+const TIMEOUT_BASE_URL = "https://www.timeout.com";
+const TIMEOUT_PAGES = [
+  "/newyork/things-to-do/things-to-do-in-nyc-this-weekend",
+  "/newyork/things-to-do",
+  "/newyork/music",
+  "/newyork/comedy",
+  "/newyork/theater",
+  "/newyork/nightlife"
+];
 
 const HEADERS = {
   "User-Agent":
@@ -129,6 +142,43 @@ function normalizeBorough(raw) {
 }
 
 /* =====================
+   CATEGORY DETECTION
+===================== */
+
+const GROUPED_CATEGORIES = {
+  sports: ['soccer', 'football', 'basketball', 'baseball', 'hockey', 'tennis', 'running', 'marathon', 'cycling', 'fitness', 'yoga', 'golf', 'boxing', 'wrestling', 'skating', 'swimming'],
+  music: ['concert', 'music', 'jazz', 'rock', 'hiphop', 'classical', 'orchestra', 'dj', 'band', 'singer', 'karaoke', 'opera', 'symphony', 'choir'],
+  comedy: ['comedy', 'standup', 'improv', 'openmic'],
+  theater: ['theater', 'theatre', 'play', 'musical', 'broadway', 'drama', 'performance'],
+  art: ['art', 'gallery', 'museum', 'exhibition', 'painting', 'sculpture', 'photography'],
+  film: ['film', 'movie', 'screening', 'documentary', 'cinema'],
+  dance: ['dance', 'ballet', 'contemporary', 'salsa', 'swing'],
+  food: ['food', 'tasting', 'wine', 'beer', 'cocktail', 'brunch', 'cooking', 'culinary', 'restaurant'],
+  market: ['market', 'fair', 'festival', 'flea', 'farmers', 'craft', 'vintage'],
+  education: ['workshop', 'class', 'seminar', 'lecture', 'talk', 'panel', 'conference'],
+  networking: ['networking', 'meetup', 'social', 'mixer', 'singles'],
+  family: ['kids', 'children', 'family', 'storytime', 'puppet'],
+  outdoor: ['outdoor', 'park', 'garden', 'nature', 'hike', 'walk', 'tour', 'boat'],
+  nightlife: ['party', 'club', 'nightlife', 'trivia', 'bingo', 'gamenight'],
+  wellness: ['wellness', 'meditation', 'mindfulness', 'healing', 'spa'],
+  special: ['parade', 'celebration', 'holiday', 'ceremony', 'gala', 'fundraiser', 'charity']
+};
+
+function detectCategory(name, description) {
+  const text = `${name} ${description}`.toLowerCase();
+  
+  for (const [category, keywords] of Object.entries(GROUPED_CATEGORIES)) {
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) {
+        return category;
+      }
+    }
+  }
+  
+  return 'special'; // Default category
+}
+
+/* =====================
    SOURCE 1: NYC PERMITTED EVENTS
 ===================== */
 
@@ -161,8 +211,9 @@ async function fetchPermittedEvents() {
           description: event.event_type
             ? `${event.event_type} event in NYC. Check source for details.`
             : 'Public event in New York City.',
-          link: `https://www.nyc.gov/events`, // NYC Open Data doesn't provide direct links
+          link: `https://www.nyc.gov/events`,
           price: 'Check source',
+          category: detectCategory(event.event_name || '', event.event_type || ''),
           source: 'GoodRec',
           platform: 'NYC Open Data',
           isActive: true,
@@ -220,6 +271,7 @@ async function fetchParksEvents() {
             : 'Free event at NYC Parks. Check site for details.',
           link: event.link || 'https://www.nycgovparks.org/events',
           price: 'Free',
+          category: detectCategory(event.title || '', event.categories || ''),
           source: 'GoodRec',
           platform: 'NYC Parks',
           isActive: true,
@@ -400,6 +452,7 @@ async function fetchEventbriteEvents() {
         description: description,
         link: event.url || 'https://www.eventbrite.com',
         price: price,
+        category: detectCategory(event.name || '', description),
         source: 'GoodRec',
         platform: 'Eventbrite',
         isActive: true,
@@ -465,6 +518,7 @@ async function fetchTicketmasterPage(page, startDateTime, endDateTime) {
         description: description,
         link: event.url,
         price: price,
+        category: detectCategory(event.name || '', description),
         source: 'GoodRec',
         platform: 'Ticketmaster',
         isActive: true,
@@ -515,6 +569,159 @@ async function fetchTicketmasterEvents() {
 }
 
 /* =====================
+   SOURCE 5: TIME OUT NYC
+===================== */
+
+function parseTimeoutDate(text) {
+  if (!text) return null;
+  
+  const cleaned = text.replace(/^(Through|Until|Now until)\s*/i, '').trim();
+  
+  const parsed = new Date(cleaned);
+  if (!isNaN(parsed)) {
+    return parsed.toISOString().split("T")[0];
+  }
+  
+  const monthDayMatch = cleaned.match(/^([A-Za-z]+)\s+(\d{1,2})$/);
+  if (monthDayMatch) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const withYear = `${monthDayMatch[1]} ${monthDayMatch[2]}, ${year}`;
+    const d = new Date(withYear);
+    if (!isNaN(d)) {
+      if (d < now) d.setFullYear(year + 1);
+      return d.toISOString().split("T")[0];
+    }
+  }
+  
+  return null;
+}
+
+async function fetchTimeoutPage(pagePath) {
+  const url = `${TIMEOUT_BASE_URL}${pagePath}`;
+  console.log(`Fetching Time Out: ${pagePath}...`);
+  
+  try {
+    const { data } = await axiosNoSSL.get(url, { headers: HEADERS, timeout: 20000 });
+    const $ = cheerio.load(data);
+    const events = [];
+    
+    // Extract JSON-LD structured data
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const json = JSON.parse($(el).text());
+        if (json["@type"] === "Event" || (Array.isArray(json) && json[0]?.["@type"] === "Event")) {
+          const items = Array.isArray(json) ? json : [json];
+          items.forEach(item => {
+            if (item["@type"] === "Event") {
+              events.push({
+                name: item.name,
+                date: formatDate(item.startDate),
+                location: item.location?.name || item.location?.address?.addressLocality || "New York City",
+                description: item.description,
+                link: item.url,
+                price: item.offers?.price ? `$${item.offers.price}` : "Check site"
+              });
+            }
+          });
+        }
+      } catch (e) { /* Skip invalid JSON */ }
+    });
+    
+    // Scrape article cards
+    $('article, [data-testid="tile"], .tile, .card').each((_, el) => {
+      const $el = $(el);
+      const title = $el.find('h2, h3, .title, [data-testid="tile-title"]').first().text().trim();
+      const link = $el.find('a').first().attr('href');
+      const description = $el.find('p, .description, .summary').first().text().trim();
+      const dateText = $el.find('time, .date, .event-date').first().text().trim();
+      
+      if (title && title.length > 3) {
+        const fullLink = link?.startsWith('http') ? link : (link ? `${TIMEOUT_BASE_URL}${link}` : null);
+        events.push({
+          name: title,
+          date: parseTimeoutDate(dateText),
+          location: "New York City",
+          description: description || `${title}. See Time Out for details.`,
+          link: fullLink,
+          price: "Check site"
+        });
+      }
+    });
+    
+    // Look for numbered list items
+    $('li').each((_, el) => {
+      const $el = $(el);
+      const text = $el.text();
+      const numberedMatch = text.match(/^\d+\.\s+(.+)/);
+      if (numberedMatch) {
+        const title = $el.find('a, h3, h4, strong').first().text().trim();
+        const link = $el.find('a').first().attr('href');
+        if (title && title.length > 5 && title.length < 200) {
+          const fullLink = link?.startsWith('http') ? link : (link ? `${TIMEOUT_BASE_URL}${link}` : null);
+          events.push({
+            name: title,
+            date: null,
+            location: "New York City",
+            description: `${title}. Featured by Time Out New York.`,
+            link: fullLink,
+            price: "Check site"
+          });
+        }
+      }
+    });
+    
+    return events;
+  } catch (err) {
+    console.error(`Time Out ${pagePath} failed: ${err.message}`);
+    return [];
+  }
+}
+
+async function fetchTimeoutEvents() {
+  console.log('Fetching Time Out NYC...');
+  const allEvents = [];
+  
+  for (const pagePath of TIMEOUT_PAGES) {
+    const events = await fetchTimeoutPage(pagePath);
+    allEvents.push(...events);
+    await new Promise(r => setTimeout(r, 1500));
+  }
+  
+  // Deduplicate by name
+  const unique = [];
+  const seen = new Set();
+  for (const event of allEvents) {
+    const key = event.name?.toLowerCase().trim();
+    if (key && !seen.has(key) && key.length > 3) {
+      seen.add(key);
+      unique.push(event);
+    }
+  }
+  
+  // Filter and normalize - include events with valid dates or no date (ongoing events)
+  const events = unique
+    .filter(e => !e.date || isWithinNext14Days(e.date))
+    .map(event => ({
+      name: event.name || 'Time Out Event',
+      date: event.date || null,
+      time: null,
+      location: event.location || 'New York City',
+      description: event.description?.substring(0, 200) || `${event.name}. Check Time Out for details.`,
+      link: event.link || 'https://www.timeout.com/newyork',
+      price: event.price || 'Check site',
+      category: detectCategory(event.name || '', event.description || ''),
+      source: 'GoodRec',
+      platform: 'Time Out',
+      isActive: true,
+      _sourceId: event.link
+    }));
+  
+  console.log(`Time Out: ${events.length} events found`);
+  return events;
+}
+
+/* =====================
    DATABASE SYNC
 ===================== */
 
@@ -524,20 +731,22 @@ async function syncAllEvents() {
   console.log('========================================\n');
 
   // Fetch from all sources in parallel
-  const [permitted, parks, eventbrite, ticketmaster] = await Promise.all([
+  const [permitted, parks, eventbrite, ticketmaster, timeout] = await Promise.all([
     fetchPermittedEvents(),
     fetchParksEvents(),
     fetchEventbriteEvents(),
     fetchTicketmasterEvents(),
+    fetchTimeoutEvents(),
   ]);
 
-  const allEvents = [...permitted, ...parks, ...eventbrite, ...ticketmaster];
+  const allEvents = [...permitted, ...parks, ...eventbrite, ...ticketmaster, ...timeout];
 
   console.log(`\nTotal events collected: ${allEvents.length}`);
   console.log(`  - NYC Permitted: ${permitted.length}`);
   console.log(`  - NYC Parks: ${parks.length}`);
   console.log(`  - Eventbrite: ${eventbrite.length}`);
   console.log(`  - Ticketmaster: ${ticketmaster.length}`);
+  console.log(`  - Time Out: ${timeout.length}`);
 
   if (allEvents.length === 0) {
     console.log('No events to sync.');
@@ -565,14 +774,59 @@ async function syncAllEvents() {
   const db = client.db(DB_NAME);
   const collection = db.collection(COLLECTION_NAME);
 
-  // Deduplicate by name + date (across all sources)
+  // Enhanced deduplication across all sources
+  // Normalizes names to catch duplicates like "The Magic Flute" vs "Magic Flute"
+  function normalizeEventName(name) {
+    if (!name) return '';
+    return name
+      .toLowerCase()
+      .replace(/^(the|a|an)\s+/i, '')  // Remove leading articles
+      .replace(/[^\w\s]/g, '')          // Remove punctuation
+      .replace(/\s+/g, ' ')             // Normalize whitespace
+      .trim();
+  }
+
+  // Priority order: Eventbrite > Ticketmaster > Time Out > NYC Parks > NYC Open Data
+  // (Eventbrite/Ticketmaster have better links and pricing)
+  const platformPriority = {
+    'Eventbrite': 1,
+    'Ticketmaster': 2,
+    'Time Out': 3,
+    'NYC Parks': 4,
+    'NYC Open Data': 5
+  };
+
+  // Sort by platform priority (lower = better)
+  const sorted = [...allEvents].sort((a, b) => {
+    const priorityA = platformPriority[a.platform] || 99;
+    const priorityB = platformPriority[b.platform] || 99;
+    return priorityA - priorityB;
+  });
+
   const unique = [];
   const seen = new Set();
-  for (const e of allEvents) {
-    const key = `${e.name?.toLowerCase()}|${e.date}`;
-    if (!seen.has(key)) {
+
+  for (const e of sorted) {
+    // Create multiple keys to catch duplicates
+    const normalizedName = normalizeEventName(e.name);
+    const exactKey = `${e.name?.toLowerCase()}|${e.date}`;
+    const normalizedKey = `${normalizedName}|${e.date}`;
+    
+    // Also check without date for ongoing events
+    const nameOnlyKey = normalizedName;
+
+    if (!seen.has(exactKey) && !seen.has(normalizedKey)) {
+      // For very short names, also check name-only to avoid "Jazz" duplicates
+      if (normalizedName.length < 15 && seen.has(nameOnlyKey)) {
+        continue;
+      }
+      
       unique.push(e);
-      seen.add(key);
+      seen.add(exactKey);
+      seen.add(normalizedKey);
+      if (normalizedName.length < 15) {
+        seen.add(nameOnlyKey);
+      }
     }
   }
 
