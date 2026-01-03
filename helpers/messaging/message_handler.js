@@ -234,8 +234,14 @@ async function processDM(senderId, messageText, payload, profile, context) {
 
     const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
 
-    // Only search immediately if we have a SPECIFIC term/category
-    if (hasSearchableTerm) {
+    // Check if we have the key filters (date and borough)
+    const hasDate = !!detectedFilters.date;
+    const hasBorough = !!detectedFilters.borough;
+    const hasCriticalFilters = hasDate || hasBorough;
+
+    // Only search immediately if we have a SPECIFIC term AND at least one critical filter (date or borough)
+    // OR if user provided all filters
+    if (hasSearchableTerm && hasCriticalFilters) {
       // Ready to search - convert detected filters to event filters format
       const eventFilters = {
         date: detectedFilters.date ? { type: detectedFilters.date } : null,
@@ -248,7 +254,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
       return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context);
     }
 
-    // Need to ask for filters - use filterPrompt if available, otherwise generate default prompt
+    // Need to ask for filters - save what we detected and ask for more
     await updateContext(senderId, {
       pendingType: 'event_gate',
       pendingQuery: messageText,
@@ -476,7 +482,13 @@ async function processDMForTest(senderId, messageText, payload = null) {
     const hasSpecificCategory = categoryName && !['general', 'other', 'any', 'special'].includes(categoryName);
     const hasSearchableTerm = hasSpecificTerm || hasSpecificCategory;
 
-    if (hasSearchableTerm) {
+    // Check if we have the key filters (date and borough)
+    const hasDate = !!detectedFilters.date;
+    const hasBorough = !!detectedFilters.borough;
+    const hasCriticalFilters = hasDate || hasBorough;
+
+    // Only search immediately if we have a SPECIFIC term AND at least one critical filter
+    if (hasSearchableTerm && hasCriticalFilters) {
       const eventFilters = {
         date: detectedFilters.date ? { type: detectedFilters.date } : null,
         borough: detectedFilters.borough || null,
@@ -487,7 +499,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
       return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context, true);
     }
 
-    // Need to ask for filters
+    // Need to ask for filters - save what we detected
     await updateContext(senderId, {
       pendingType: 'event_gate',
       pendingQuery: messageText,
