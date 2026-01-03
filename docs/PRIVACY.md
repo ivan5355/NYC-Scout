@@ -60,7 +60,7 @@ You can type these commands anytime:
 | `opt out` | Removes you from social matching but keeps your food/event preferences |
 | `stop matching` | Pauses matching (you can resume later by saying "start matching") |
 | `report` | Reports your most recent match if something feels off |
-| `reset` | Resets your onboarding to start fresh |
+| `reset` | Clears your conversation context to start fresh |
 
 ## Data Security
 

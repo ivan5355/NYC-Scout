@@ -3,7 +3,7 @@
 
 const { MongoClient, ObjectId } = require('mongodb');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env.local') });
 
 const {
   getSocialProfile,
@@ -156,7 +156,6 @@ async function handleOptInResponse(senderId, accepted) {
   
   // Set opt-in and start profile questions
   await setSocialOptIn(senderId, true);
-  await updateSocialProfile(senderId, { onboardingStep: 1 });
   
   // Return first question
   return getNextQuestion(1);
@@ -184,8 +183,7 @@ async function handleProfileQuestion(senderId, questionNum, answer) {
   
   // Save the answer
   const updates = {
-    [question.field]: answer,
-    onboardingStep: questionNum + 1
+    [question.field]: answer
   };
   
   // If this was the last question, mark profile as complete

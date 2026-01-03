@@ -42,7 +42,7 @@ MongoClient.mockImplementation(() => ({
 
 // Now require the modules
 const { processDMForTest } = require('../message_handler');
-const { updateContext, getContext, getOrCreateProfile } = require('../user_profile');
+const { updateContext, getContext, getOrCreateProfile } = require('../../users/user_profile');
 
 describe('More Pagination Tests', () => {
   
@@ -62,7 +62,6 @@ describe('More Pagination Tests', () => {
 
   const baseProfile = {
     _id: 'test_user_123',
-    onboarding: { completed: true, step: 5, category: 'food' },
     foodProfile: { dietary: [], budget: null, borough: null },
     context: {}
   };

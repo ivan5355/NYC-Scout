@@ -2,7 +2,7 @@ const axios = require('axios');
 const https = require('https');
 const path = require('path');
 const { MongoClient } = require('mongodb');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env.local') });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -209,7 +209,7 @@ async function searchEventsDB(filters, limit = 20) {
   }
 
   // 3. CATEGORY/SEARCH TERM (from Gemini)
-  const { loadEventCategories } = require('./query_router');
+  const { loadEventCategories } = require('../messaging/query_router');
   const categoryKeywordsMap = loadEventCategories();
 
   try {
@@ -474,7 +474,7 @@ async function searchEvents(userId, query, context = null) {
 ===================== */
 
 async function searchEventsWithWebSearch(userId, query, filters) {
-  const { checkAndIncrementSearch } = require('./rate_limiter');
+  const { checkAndIncrementSearch } = require('../utils/rate_limiter');
 
   if (!GEMINI_API_KEY || !await checkAndIncrementSearch(userId)) return null;
 

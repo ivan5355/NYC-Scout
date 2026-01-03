@@ -2,7 +2,7 @@ const axios = require('axios');
 const https = require('https');
 const path = require('path');
 const { MongoClient } = require('mongodb');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env.local') });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URI;

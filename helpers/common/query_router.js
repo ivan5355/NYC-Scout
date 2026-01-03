@@ -2,7 +2,7 @@ const axios = require('axios');
 const https = require('https');
 const path = require('path');
 const fs = require('fs');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+require('dotenv').config({ path: path.join(__dirname, '..', '..', '.env.local') });
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -21,7 +21,7 @@ function loadEventCategories() {
   if (EVENT_CATEGORIES) return EVENT_CATEGORIES;
   
   try {
-    const categoriesPath = path.join(__dirname, '..', 'data', 'event_categories.json');
+    const categoriesPath = path.join(__dirname, '..', '..', 'data', 'event_categories.json');
     if (fs.existsSync(categoriesPath)) {
       const data = JSON.parse(fs.readFileSync(categoriesPath, 'utf8'));
       EVENT_CATEGORIES = data.groupedCategories || {};

@@ -9,7 +9,7 @@ const cors = require('cors');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
-const { handleDM, processDMForTest } = require('../helpers/message_handler');
+const { handleDM, processDMForTest } = require('../helpers/messaging/message_handler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
