@@ -185,6 +185,15 @@ async function processDM(senderId, messageText, payload, profile, context) {
   const modeHandled = await handleModeSelection(senderId, payload);
   if (modeHandled) return;
 
+  // Handle restaurant_preferences pending type (user responding with filters like "Brooklyn, cheap")
+  if (context?.pendingType === 'restaurant_preferences' && messageText && !payload) {
+    const result = await handleConversationalPreferences(senderId, messageText, profile, context);
+    if (result?.reply) {
+      await sendMessage(senderId, result.reply, result.buttons);
+    }
+    return;
+  }
+
   // =====================
   // NEW INTENT CLASSIFICATION FLOW
   // Step 1: Classify EVENT vs RESTAURANT
