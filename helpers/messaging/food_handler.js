@@ -10,7 +10,6 @@ const { updateContext, addShownRestaurants } = require('../users/user_profile');
 const {
   geminiClient,
   sendMessage,
-  parseBoroughFromText,
   GEMINI_API_KEY
 } = require('./messenger_utils');
 

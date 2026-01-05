@@ -18,8 +18,7 @@ const {
 const {
   getSenderId,
   getIncomingTextOrPayload,
-  sendMessage,
-  parseBoroughFromText
+  sendMessage
 } = require('./messenger_utils');
 
 const {
@@ -559,15 +558,6 @@ Example: "Brooklyn this weekend" or just "search"`;
 
   const socialResult = await handleSocialDM(senderId, messageText, null, context);
   if (socialResult) return socialResult;
-
-  if (context?.pendingType === 'restaurant_gate' && messageText) {
-    const textBorough = parseBoroughFromText(messageText);
-    if (textBorough !== undefined) {
-      const pendingFilters = { ...(context.pendingFilters || {}) };
-      pendingFilters.borough = textBorough;
-      return await handleConversationalPreferences(senderId, messageText, profile, context);
-    }
-  }
 
   return {
     reply: "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?",

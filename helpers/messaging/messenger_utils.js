@@ -67,7 +67,6 @@ module.exports = {
   geminiClient,
   getSenderId,
   getIncomingTextOrPayload,
-  parseBoroughFromText,
   sendMessage,
   GEMINI_API_KEY
 };
