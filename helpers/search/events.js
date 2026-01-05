@@ -40,36 +40,6 @@ async function connectToEvents() {
 }
 
 /* =====================
-   FETCH FROM MONGODB
-===================== */
-
-async function fetchAllEvents() {
-  const collection = await connectToEvents();
-  if (!collection) {
-    console.log('No DB connection, returning empty events');
-    return [];
-  }
-
-  try {
-    const today = new Date().toISOString().split('T')[0];
-
-    const events = await collection.find({
-      isActive: true,
-      date: { $gte: today }
-    })
-      .sort({ date: 1 })
-      .limit(500)
-      .toArray();
-
-    console.log(`Fetched ${events.length} events from MongoDB`);
-    return events.map(mapEventToFormat);
-  } catch (err) {
-    console.error('Failed to fetch events from MongoDB:', err.message);
-    return [];
-  }
-}
-
-/* =====================
    HELPERS
 ===================== */
 
@@ -592,7 +562,6 @@ function formatEventDate(dateTimeStr) {
 ===================== */
 
 module.exports = {
-  fetchAllEvents,
   searchEvents,
   searchEventsDB,
   formatEventResults

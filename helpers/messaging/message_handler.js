@@ -25,7 +25,6 @@ const {
   runEventSearchWithFilters
 } = require('./event_handler');
 const {
-  answerFoodQuestion,
   handleRestaurantQueryWithSystemPrompt,
   handleConversationalPreferences
 } = require('./food_handler');
@@ -328,9 +327,7 @@ Example: "Brooklyn this weekend" or just "search"`;
   // FOOD QUESTION FLOW
   // =====================
   if (intentResult.type === 'FOOD_QUESTION') {
-    const answer = await answerFoodQuestion(messageText, context);
-    await sendMessage(senderId, answer);
-    await updateContext(senderId, { lastCategory: 'FOOD_QUESTION', pendingType: null });
+    await sendMessage(senderId, "I'm best at finding specific restaurant and event recommendations! Tell me what you're craving or what kind of event you're looking for.");
     return;
   }
 
@@ -413,9 +410,10 @@ async function processDMForTest(senderId, messageText) {
   );
 
   if (isWhyQuestion && (lastCategory === 'FOOD_SEARCH' || lastCategory === 'RESTAURANT')) {
-    const answer = await answerFoodQuestion(messageText, context);
-    await updateContext(senderId, { lastCategory: 'FOOD_QUESTION', pendingType: null });
-    return { reply: answer, category: 'FOOD_QUESTION' };
+    return {
+      reply: "I'm focused on finding you the best recommendations right now! What else are you looking for?",
+      category: 'RESTAURANT'
+    };
   }
 
   // =====================
@@ -551,9 +549,10 @@ Example: "Brooklyn this weekend" or just "search"`;
 
   // FOOD QUESTION FLOW
   if (intentResult.type === 'FOOD_QUESTION') {
-    const answer = await answerFoodQuestion(messageText, context);
-    await updateContext(senderId, { lastCategory: 'FOOD_QUESTION', pendingType: null });
-    return { reply: answer, category: 'FOOD_QUESTION' };
+    return {
+      reply: "I'm best at finding specific restaurant and event recommendations! Tell me what you're craving or what kind of event you're looking for.",
+      category: 'OTHER'
+    };
   }
 
   const socialResult = await handleSocialDM(senderId, messageText, null, context);

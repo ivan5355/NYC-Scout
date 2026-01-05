@@ -2,10 +2,9 @@ const {
   searchRestaurants,
   formatRestaurantResults,
   searchRestaurantsDB,
-  getWebResearch,
-  extractIntent,
-  RESTAURANT_SYSTEM_PROMPT
+  extractIntent
 } = require('../search/restaurants');
+const { RESTAURANT_SYSTEM_PROMPT } = require('../search/restaurant_prompts');
 const { updateContext, addShownRestaurants } = require('../users/user_profile');
 const {
   geminiClient,
@@ -13,57 +12,7 @@ const {
   GEMINI_API_KEY
 } = require('./messenger_utils');
 
-async function answerFoodQuestion(question, context = null) {
-  if (!GEMINI_API_KEY) {
-    return "Great question! I'd need to think about that one. In the meantime, want me to find you some restaurant recommendations?";
-  }
 
-  let contextInfo = '';
-  if (context?.lastIntent?.restaurantName) {
-    contextInfo = `\nContext: User just asked about "${context.lastIntent.restaurantName}"`;
-  } else if (context?.lastIntent?.dish_or_cuisine) {
-    contextInfo = `\nContext: User just searched for "${context.lastIntent.dish_or_cuisine}" in ${context.lastIntent.borough || 'NYC'}`;
-  }
-  if (context?.lastResults?.length > 0) {
-    const lastRestaurants = context.lastResults.slice(0, 5).map(r => r.name).join(', ');
-    contextInfo += `\nRestaurants shown: ${lastRestaurants}`;
-  }
-
-  const prompt = `You are NYC Scout, a friendly NYC food expert. Answer this question concisely (2-4 sentences max).
-
-Question: "${question}"${contextInfo}
-
-Rules:
-- If user asks "why didn't you suggest X" or "why not X" - explain that your search results come from Gemini AI and may not include every restaurant. Suggest they ask specifically about that restaurant.
-- If asking about a specific restaurant, use the context to give a helpful answer
-- Be honest if you don't know something
-- Keep it short for Instagram DM
-- Be friendly and helpful
-
-Answer:`;
-
-  try {
-    const response = await geminiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 300, temperature: 0.7 }
-      },
-      { params: { key: GEMINI_API_KEY } }
-    );
-
-    const answer = response.data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    if (answer && answer.length > 10) {
-      return answer;
-    }
-  } catch (err) {
-    console.error('Food question answer failed:', err.message);
-  }
-
-  return "Good question! My search results come from various sources and may not include every restaurant. If you want info on a specific place, just ask me about it directly!";
-}
-
-// showFilterMenu removed - now using text-only prompts
 
 
 async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, returnResult = false) {
@@ -188,7 +137,7 @@ Example: "Brooklyn" or "cheap, casual" or just hit search!`;
   }
 
   if (dbRestaurants.length === 0) {
-    const searchResult = await searchRestaurants(senderId, messageText || payload || '', filters, profile?.foodProfile, context, true);
+    const searchResult = await searchRestaurants(senderId, messageText || payload || '', filters, profile?.foodProfile, context, true, intent);
     const formatted = formatRestaurantResults(searchResult);
 
     await updateContext(senderId, {
@@ -242,7 +191,7 @@ Example: "Brooklyn" or "cheap, casual" or just hit search!`;
         const researchData = JSON.parse(cleanResult);
 
         if (!researchData.queries?.length || !researchData.shortlist?.length) {
-          const searchResult = await searchRestaurants(senderId, messageText || payload || '', filters, profile?.foodProfile, context, true);
+          const searchResult = await searchRestaurants(senderId, messageText || payload || '', filters, profile?.foodProfile, context, true, intent);
           const formatted = formatRestaurantResults(searchResult);
 
           await updateContext(senderId, {
@@ -264,45 +213,19 @@ Example: "Brooklyn" or "cheap, casual" or just hit search!`;
           return;
         }
 
-        const snippets = await getWebResearch(researchData.queries);
+        // Since manual web research is deprecated in favor of searchRestaurants
+        // we directly fallback to searchRestaurants if research is needed
+        const searchResult = await searchRestaurants(senderId, messageText || '', filters, profile?.foodProfile, context, true, intent);
+        const formatted = formatRestaurantResults(searchResult);
 
-        const promptWithSnippets = RESTAURANT_SYSTEM_PROMPT
-          .replace('{{TODAY_DATE}}', today)
-          .replace('{{USER_MESSAGE}}', messageText || '')
-          .replace('{{USER_PAYLOAD}}', '')
-          .replace('{{USER_PROFILE_JSON}}', JSON.stringify(profile.foodProfile || {}))
-          .replace('{{USER_CONTEXT_JSON}}', JSON.stringify(context || {}))
-          .replace('{{DB_RESTAURANTS_JSON}}', JSON.stringify(dbRestaurants))
-          .replace('{{WEB_RESEARCH_SNIPPETS}}', snippets || '')
-          .replace('{{WEB_RESEARCH_ALLOWED}}', 'false');
-
-        response = await geminiClient.post(
-          'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
-          {
-            contents: [{ parts: [{ text: promptWithSnippets }] }],
-            generationConfig: { maxOutputTokens: 2048, temperature: 0.2 }
-          },
-          { params: { key: GEMINI_API_KEY } }
-        );
-        resultText = response.data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-
-        if (resultText.startsWith('```')) {
-          resultText = resultText.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/i, '').trim();
+        if (returnResult) {
+          return { reply: formatted.text, category: 'RESTAURANT' };
         }
-
-        if (resultText.startsWith('{') && resultText.includes('NEED_RESEARCH')) {
-          const searchResult = await searchRestaurants(senderId, messageText || '', filters, profile?.foodProfile, context, true);
-          const formatted = formatRestaurantResults(searchResult);
-
-          if (returnResult) {
-            return { reply: formatted.text, category: 'RESTAURANT' };
-          }
-          await sendMessage(senderId, formatted.text);
-          return;
-        }
+        await sendMessage(senderId, formatted.text);
+        return;
       } catch (e) {
-        console.error('Failed to parse research JSON or fetch snippets:', e.message);
-        const searchResult = await searchRestaurants(senderId, messageText || '', filters, profile?.foodProfile, context, true);
+        console.error('Failed to parse research JSON or handle research request:', e.message);
+        const searchResult = await searchRestaurants(senderId, messageText || '', filters, profile?.foodProfile, context, true, intent);
         const formatted = formatRestaurantResults(searchResult);
 
         if (returnResult) {
@@ -408,13 +331,24 @@ async function handleConversationalPreferences(senderId, messageText, profile, c
     lastCategory: 'RESTAURANT'
   });
 
+  // Construct intent from pending filters to avoid redundant extraction
+  const prebuiltIntent = {
+    request_type: pendingFilters.isDishQuery ? 'dish' : 'cuisine',
+    dish: pendingFilters.isDishQuery ? pendingFilters.cuisine : null,
+    cuisine: pendingFilters.isDishQuery ? null : pendingFilters.cuisine,
+    borough: pendingFilters.borough,
+    budget: pendingFilters.budget,
+    needs_constraint: false
+  };
+
   const searchResult = await searchRestaurants(
     senderId,
     context.pendingQuery || pendingFilters.cuisine || 'restaurant',
     pendingFilters,
     profile?.foodProfile,
     context,
-    true
+    true,
+    prebuiltIntent
   );
   const formatted = formatRestaurantResults(searchResult);
 
@@ -434,7 +368,6 @@ async function handleConversationalPreferences(senderId, messageText, profile, c
 }
 
 module.exports = {
-  answerFoodQuestion,
   handleRestaurantQueryWithSystemPrompt,
   handleConversationalPreferences
 };
