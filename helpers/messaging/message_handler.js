@@ -151,6 +151,13 @@ async function processDM(senderId, messageText, profile, context) {
     console.log(`[EVENT_GATE] Parsing text preferences with Gemini: "${messageText}"`);
     const pendingFilters = { ...(context.pendingFilters || {}) };
     const pendingQuery = context.pendingQuery || '';
+    const textLower = messageText.toLowerCase().trim();
+
+    // Check if user just wants to search with current filters
+    if (textLower === 'search' || textLower.includes('just search') || textLower.includes('show me')) {
+      console.log(`[EVENT_GATE] User triggered search with current filters:`, JSON.stringify(pendingFilters));
+      return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
+    }
 
     // Use Gemini to parse the filters
     const parsedFilters = await parseEventFiltersWithGemini(messageText);
@@ -160,8 +167,8 @@ async function processDM(senderId, messageText, profile, context) {
     if (parsedFilters.borough) pendingFilters.borough = parsedFilters.borough;
     if (parsedFilters.price) pendingFilters.price = parsedFilters.price;
 
-    // If we parsed at least one new filter, run the search
-    if (parsedFilters.date || parsedFilters.borough || parsedFilters.price) {
+    // If we parsed at least one new filter OR user is providing any response, run the search
+    if (parsedFilters.date || parsedFilters.borough || parsedFilters.price || messageText.length > 0) {
       console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context);
     }
@@ -237,43 +244,53 @@ async function processDM(senderId, messageText, profile, context) {
     if (searchTerm && !hasDate && !hasBorough) {
       promptText = `🎪 ${searchTerm}! NYC has a lot going on.
 
-Tell me:
-📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
-📅 When? (tonight, this weekend, next week...)
+Tell me (all optional):
+📍 Where: Manhattan, Brooklyn, Queens, or "all NYC"
+📅 When: tonight, this weekend, next week...
 
-Example: "Brooklyn this weekend" or "Manhattan tonight"`;
+🎲 Or just say "search" to see what's out there!
+
+Example: "Brooklyn this weekend" or just "search"`;
     } else if (searchTerm && hasDate && !hasBorough) {
       promptText = `🎪 ${searchTerm} ${detectedFilters.date}! 
 
-📍 Where? (Manhattan, Brooklyn, Queens, Bronx, Staten Island, or "all NYC")`;
+📍 Where (optional): Manhattan, Brooklyn, Queens, Bronx, Staten Island, or "all NYC"
+
+🎲 Or just say "search" to see everything!`;
     } else if (searchTerm && !hasDate && hasBorough) {
       promptText = `🎪 ${searchTerm} in ${detectedFilters.borough}!
 
-📅 When? (tonight, tomorrow, this weekend, next week...)`;
+📅 When (optional): tonight, tomorrow, this weekend, next week...
+
+🎲 Or just say "search" to see everything!`;
     } else if (!searchTerm && hasDate && !hasBorough) {
       promptText = `🎪 Events ${detectedFilters.date}!
 
-📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
-✨ What category? (music, comedy, art, sports...)
+Tell me (all optional):
+📍 Where: Manhattan, Brooklyn, Queens, or "all NYC"
+✨ Category: music, comedy, art, sports...
 
-Example: "comedy in Brooklyn" or "Manhattan music"`;
+🎲 Or just say "search" to see everything!`;
     } else if (!searchTerm && !hasDate && hasBorough) {
       promptText = `🎪 Events in ${detectedFilters.borough}!
 
-📅 When? (tonight, this weekend, next week...)
-✨ What category? (music, comedy, art, sports...)
+Tell me (all optional):
+📅 When: tonight, this weekend, next week...
+✨ Category: music, comedy, art, sports...
 
-Example: "comedy this weekend" or "music tonight"`;
+🎲 Or just say "search" to see everything!`;
     } else {
       promptText = `🎪 NYC has hundreds of events!
 
-Tell me what you're looking for:
+Tell me what you're looking for (all optional):
 
-📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
-📅 When? (tonight, this weekend, next week...)
-✨ What category? (music, comedy, art, nightlife, sports...)
+📍 Where: Manhattan, Brooklyn, Queens, or "all NYC"
+📅 When: tonight, this weekend, next week...
+✨ Category: music, comedy, art, nightlife, sports...
 
-Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
+🎲 Or just say "search" to see what's happening!
+
+Example: "Brooklyn this weekend" or just "search"`;
     }
 
     await sendMessage(senderId, promptText);
@@ -371,6 +388,13 @@ async function processDMForTest(senderId, messageText) {
     console.log(`[EVENT_GATE] Parsing text preferences with Gemini: "${messageText}"`);
     const pendingFilters = { ...(context.pendingFilters || {}) };
     const pendingQuery = context.pendingQuery || '';
+    const textLower = messageText.toLowerCase().trim();
+
+    // Check if user just wants to search with current filters
+    if (textLower === 'search' || textLower.includes('just search') || textLower.includes('show me')) {
+      console.log(`[EVENT_GATE] User triggered search with current filters:`, JSON.stringify(pendingFilters));
+      return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, true);
+    }
 
     // Use Gemini to parse the filters
     const parsedFilters = await parseEventFiltersWithGemini(messageText);
@@ -380,8 +404,8 @@ async function processDMForTest(senderId, messageText) {
     if (parsedFilters.borough) pendingFilters.borough = parsedFilters.borough;
     if (parsedFilters.price) pendingFilters.price = parsedFilters.price;
 
-    // If we parsed at least one filter, run the search
-    if (parsedFilters.date || parsedFilters.borough || parsedFilters.price) {
+    // If we parsed at least one filter OR user is providing any response, run the search
+    if (parsedFilters.date || parsedFilters.borough || parsedFilters.price || messageText.length > 0) {
       console.log(`[EVENT_GATE] Merged filters:`, JSON.stringify(pendingFilters));
       return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, true);
     }
@@ -468,43 +492,53 @@ async function processDMForTest(senderId, messageText) {
     if (searchTerm && !hasDate && !hasBorough) {
       promptText = `🎪 ${searchTerm}! NYC has a lot going on.
 
-Tell me:
-📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
-📅 When? (tonight, this weekend, next week...)
+Tell me (all optional):
+📍 Where: Manhattan, Brooklyn, Queens, or "all NYC"
+📅 When: tonight, this weekend, next week...
 
-Example: "Brooklyn this weekend" or "Manhattan tonight"`;
+🎲 Or just say "search" to see what's out there!
+
+Example: "Brooklyn this weekend" or just "search"`;
     } else if (searchTerm && hasDate && !hasBorough) {
       promptText = `🎪 ${searchTerm} ${detectedFilters.date}! 
 
-📍 Where? (Manhattan, Brooklyn, Queens, Bronx, Staten Island, or "all NYC")`;
+📍 Where (optional): Manhattan, Brooklyn, Queens, Bronx, Staten Island, or "all NYC"
+
+🎲 Or just say "search" to see everything!`;
     } else if (searchTerm && !hasDate && hasBorough) {
       promptText = `🎪 ${searchTerm} in ${detectedFilters.borough}!
 
-📅 When? (tonight, tomorrow, this weekend, next week...)`;
+📅 When (optional): tonight, tomorrow, this weekend, next week...
+
+🎲 Or just say "search" to see everything!`;
     } else if (!searchTerm && hasDate && !hasBorough) {
       promptText = `🎪 Events ${detectedFilters.date}!
 
-📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
-✨ What category? (music, comedy, art, sports...)
+Tell me (all optional):
+📍 Where: Manhattan, Brooklyn, Queens, or "all NYC"
+✨ Category: music, comedy, art, sports...
 
-Example: "comedy in Brooklyn" or "Manhattan music"`;
+🎲 Or just say "search" to see everything!`;
     } else if (!searchTerm && !hasDate && hasBorough) {
       promptText = `🎪 Events in ${detectedFilters.borough}!
 
-📅 When? (tonight, this weekend, next week...)
-✨ What category? (music, comedy, art, sports...)
+Tell me (all optional):
+📅 When: tonight, this weekend, next week...
+✨ Category: music, comedy, art, sports...
 
-Example: "comedy this weekend" or "music tonight"`;
+🎲 Or just say "search" to see everything!`;
     } else {
       promptText = `🎪 NYC has hundreds of events!
 
-Tell me what you're looking for:
+Tell me what you're looking for (all optional):
 
-📍 Where? (Manhattan, Brooklyn, Queens, or "all NYC")
-📅 When? (tonight, this weekend, next week...)
-✨ What category? (music, comedy, art, nightlife, sports...)
+📍 Where: Manhattan, Brooklyn, Queens, or "all NYC"
+📅 When: tonight, this weekend, next week...
+✨ Category: music, comedy, art, nightlife, sports...
 
-Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
+🎲 Or just say "search" to see what's happening!
+
+Example: "Brooklyn this weekend" or just "search"`;
     }
 
     return { reply: promptText, buttons: null, category: 'EVENT' };

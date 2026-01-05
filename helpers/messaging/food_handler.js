@@ -154,14 +154,15 @@ async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, prof
 
     const question = `🍜 ${dishOrCuisine}! NYC has ${estimatedCount} spots.
 
-Tell me what you're looking for:
+Tell me what you're looking for (all optional):
 
-📍 Location (Manhattan, Brooklyn, Queens...)
-💰 Budget (cheap, moderate, fancy)
-✨ Vibe (casual, date night, trendy, hidden gem)
-🎲 Or just say "surprise me"
+📍 Location: Manhattan, Brooklyn, Queens...
+💰 Budget: cheap, moderate, fancy
+✨ Vibe: casual, date night, trendy, hidden gem
 
-Example: "Manhattan, under $30, casual"`;
+🎲 Or just say "surprise me" or "search"
+
+Example: "Brooklyn" or "cheap, casual" or just hit search!`;
 
     if (returnResult) return { reply: question, category: 'RESTAURANT' };
     await sendMessage(senderId, question);
@@ -392,10 +393,12 @@ async function handleConversationalPreferences(senderId, messageText, profile, c
     pendingFilters.vibe = 'hidden gem';
   }
 
-  if (textLower.includes('surprise')) {
+  if (textLower.includes('surprise') || textLower.includes('search')) {
     const boroughs = ['Manhattan', 'Brooklyn', 'Queens'];
-    pendingFilters.borough = boroughs[Math.floor(Math.random() * boroughs.length)];
-    pendingFilters.budget = 'any';
+    if (!pendingFilters.borough || pendingFilters.borough === 'any') {
+      pendingFilters.borough = boroughs[Math.floor(Math.random() * boroughs.length)];
+    }
+    pendingFilters.budget = pendingFilters.budget || 'any';
   }
 
   await updateContext(senderId, {
