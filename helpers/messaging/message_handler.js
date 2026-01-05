@@ -189,7 +189,7 @@ async function processDM(senderId, messageText, profile, context) {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context);
       } else {
-        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, false, context?.lastFilters);
       }
     }
   }
@@ -303,7 +303,7 @@ Example: "Brooklyn this weekend" or just "search"`;
 
     if (hasCuisineOrDish) {
       // We have cuisine/dish - pass to restaurant handler which will ask for remaining filters
-      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, false, detectedFilters);
     }
 
     // Need to ask for cuisine/dish first
@@ -320,7 +320,7 @@ Example: "Brooklyn this weekend" or just "search"`;
     }
 
     // Fallback to existing handler
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, false, detectedFilters);
   }
 
   // =====================
@@ -428,7 +428,7 @@ async function processDMForTest(senderId, messageText) {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context, true);
       } else {
-        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true, context?.lastFilters);
       }
     }
   }
@@ -532,7 +532,7 @@ Example: "Brooklyn this weekend" or just "search"`;
     const hasCuisineOrDish = detectedFilters.cuisine || detectedFilters.dish;
 
     if (hasCuisineOrDish) {
-      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true, intentResult?.detectedFilters);
     }
 
     if (filterPrompt) {
@@ -544,7 +544,7 @@ Example: "Brooklyn this weekend" or just "search"`;
       });
       return { reply: filterPrompt.text, category: 'RESTAURANT' };
     }
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true, intentResult?.detectedFilters);
   }
 
   // FOOD QUESTION FLOW

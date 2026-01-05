@@ -1,8 +1,7 @@
 const {
   searchRestaurants,
   formatRestaurantResults,
-  searchRestaurantsDB,
-  extractIntent
+  searchRestaurantsDB
 } = require('../search/restaurants');
 const { RESTAURANT_SYSTEM_PROMPT } = require('../search/restaurant_prompts');
 const { updateContext, addShownRestaurants } = require('../users/user_profile');
@@ -15,20 +14,35 @@ const {
 
 
 
-async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, returnResult = false) {
+async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, returnResult = false, detectedFilters = null) {
   const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
 
-
-
+  // Use pre-detected filters from classifyIntentAndFilters if provided (avoids redundant Gemini call)
   let intent;
-  try {
-    intent = await extractIntent(messageText || '');
-  } catch (err) {
-    console.error('[RESTAURANTS] extractIntent failed:', err.message);
-    intent = { request_type: 'vague', dish: null, cuisine: null };
+  if (detectedFilters) {
+    // Build intent from pre-detected filters
+    intent = {
+      request_type: detectedFilters.dish ? 'dish' : (detectedFilters.cuisine ? 'cuisine' : 'vague'),
+      dish: detectedFilters.dish || null,
+      cuisine: detectedFilters.cuisine || null,
+      borough: detectedFilters.borough || null,
+      budget: detectedFilters.budget || null,
+      vibe: detectedFilters.vibe || null
+    };
+    console.log('[RESTAURANTS] Using pre-detected filters:', intent);
+  } else {
+    // Fallback: use context or defaults (shouldn't normally happen)
+    console.log('[RESTAURANTS] No pre-detected filters, using context fallback');
+    intent = {
+      request_type: 'vague',
+      dish: context?.pendingFilters?.dish || null,
+      cuisine: context?.pendingFilters?.cuisine || null,
+      borough: context?.pendingFilters?.borough || null,
+      budget: context?.pendingFilters?.budget || null
+    };
   }
 
-  const dishOrCuisine = intent.dish || intent.cuisine || intent.dish_or_cuisine;
+  const dishOrCuisine = intent.dish || intent.cuisine;
   const hasDish = !!intent.dish && intent.request_type === 'dish';
 
   const filters = {
@@ -59,6 +73,7 @@ async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, prof
   } else {
     filters.budget = intent.budget || context?.pendingFilters?.budget || context?.lastFilters?.budget;
   }
+
 
 
   const genericWords = ['best', 'good', 'nice', 'great', 'amazing', 'food', 'restaurant', 'restaurants', 'spots', 'places', 'hungry', 'eat', 'dinner', 'lunch', 'breakfast'];

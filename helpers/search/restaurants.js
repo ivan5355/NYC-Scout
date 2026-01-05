@@ -7,7 +7,6 @@ const {
   RESTAURANT_SYSTEM_PROMPT,
   NYC_SCOUT_GEMINI_GROUNDED_SEARCH_PROMPT,
   NYC_SCOUT_GEMINI_FORMATTER_PROMPT,
-  INTENT_PARSER_PROMPT,
   SPOTLIGHT_SEARCH_PROMPT
 } = require('./restaurant_prompts');
 
@@ -126,174 +125,7 @@ function detectSpotlightQuery(query) {
   return { isSpotlight: false, restaurantName: null };
 }
 
-// =====================
-// GEMINI INTENT EXTRACTION (primary method)
-// =====================
-async function extractIntentWithGemini(query) {
-  if (!GEMINI_API_KEY) return null;
-
-  const prompt = INTENT_PARSER_PROMPT(query);
-
-  try {
-    const response = await apiClient.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 500, temperature: 0.1 }
-      },
-      { params: { key: GEMINI_API_KEY } }
-    );
-
-    let text = response.data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    // Clean markdown if present
-    text = text.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
-
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]);
-      console.log(`[GEMINI INTENT] "${query}" ->`, JSON.stringify(parsed));
-      return parsed;
-    }
-  } catch (err) {
-    console.error('Gemini intent extraction failed:', err.message);
-  }
-  return null;
-}
-
-// =====================
-// DISH KEYWORD PATTERNS - dishes that should NEVER be downgraded to cuisine
-// =====================
-const DISH_PATTERNS = {
-  sushi: /(sushi|omakase|nigiri|sashimi|hand ?roll|temaki)/i,
-  ramen: /(ramen|shoyu|tonkotsu|miso ramen|tsukemen)/i,
-  pho: /\bpho\b/i,
-  tacos: /(tacos?|birria|al pastor|carnitas)/i,
-  pizza: /(pizza|margherita|neapolitan|slice)/i,
-  dumplings: /(dumplings?|xiaolongbao|xiao long bao|soup dumplings?|jiaozi|gyoza|momo)/i,
-  biryani: /biryani/i,
-  pad_thai: /pad thai/i,
-  burger: /(burger|smashburger|cheeseburger)/i,
-  fried_chicken: /(fried chicken|korean fried chicken|kfc style)/i,
-  bagel: /(bagel|lox|schmear)/i,
-  dim_sum: /(dim ?sum|har gow|siu mai|char siu bao)/i,
-  bbq: /(bbq|barbeque|barbecue|brisket|burnt ends)/i,
-  steak: /(steak|steakhouse|ribeye|filet mignon|porterhouse)/i,
-  pasta: /(pasta|carbonara|cacio e pepe|bolognese|amatriciana)/i,
-  poke: /(poke|poke bowl)/i,
-  falafel: /falafel/i,
-  shawarma: /shawarma/i,
-  curry: /(curry|tikka masala|butter chicken|vindaloo|korma)/i
-};
-
-// Extract the canonical dish name from query
-function extractDishFromQuery(query) {
-  const t = query.toLowerCase();
-
-  for (const [dishKey, pattern] of Object.entries(DISH_PATTERNS)) {
-    if (pattern.test(t)) {
-      // Return the most specific match
-      const match = t.match(pattern);
-      if (match) {
-        // Normalize the dish name
-        const matched = match[0].trim();
-        // Special cases
-        if (dishKey === 'sushi' && t.includes('omakase')) return 'omakase';
-        if (dishKey === 'ramen' && t.includes('tonkotsu')) return 'tonkotsu ramen';
-        if (dishKey === 'dumplings' && (t.includes('soup dumpling') || t.includes('xiaolongbao') || t.includes('xiao long bao'))) return 'soup dumplings';
-        return matched;
-      }
-    }
-  }
-  return null;
-}
-
-// Fallback regex extraction (only used if Gemini fails)
-function extractIntentFallback(query) {
-  const t = query.toLowerCase();
-  const intent = {
-    request_type: 'vague',
-    dish: null,
-    cuisine: null,
-    borough: null,
-    neighborhood: null,
-    budget: null,
-    dietary: [],
-    occasion: null,
-    needs_constraint: false,
-    missing_constraint: null,
-    followup_question: null,
-    quick_replies: null
-  };
-
-  // PRIORITY 1: Check for explicit dishes FIRST (before cuisine)
-  const detectedDish = extractDishFromQuery(query);
-  if (detectedDish) {
-    intent.dish = detectedDish;
-    intent.request_type = 'dish';
-    console.log(`[INTENT] Detected dish: "${detectedDish}"`);
-  }
-
-  // Borough detection
-  const boroughMap = {
-    'manhattan': 'Manhattan', 'midtown': 'Manhattan', 'downtown': 'Manhattan',
-    'brooklyn': 'Brooklyn', 'williamsburg': 'Brooklyn', 'bushwick': 'Brooklyn',
-    'queens': 'Queens', 'flushing': 'Queens', 'astoria': 'Queens', 'jackson heights': 'Queens',
-    'bronx': 'Bronx', 'staten island': 'Staten Island'
-  };
-  for (const [key, val] of Object.entries(boroughMap)) {
-    if (t.includes(key)) { intent.borough = val; break; }
-  }
-
-  // Budget
-  if (t.includes('cheap') || t.includes('budget')) intent.budget = 'cheap';
-  else if (t.includes('nice') || t.includes('fancy') || t.includes('upscale')) intent.budget = 'nice';
-
-  // Dietary
-  if (t.includes('vegetarian')) intent.dietary.push('vegetarian');
-  if (t.includes('vegan')) intent.dietary.push('vegan');
-  if (t.includes('halal')) intent.dietary.push('halal');
-  if (t.includes('kosher')) intent.dietary.push('kosher');
-
-  // PRIORITY 2: Only check cuisines if no dish was found
-  if (!intent.dish) {
-    const cuisines = ['indian', 'chinese', 'thai', 'japanese', 'korean', 'mexican', 'italian', 'french', 'vietnamese', 'ethiopian', 'greek', 'turkish', 'lebanese', 'caribbean', 'asian', 'american', 'mediterranean'];
-    for (const c of cuisines) {
-      if (t.includes(c)) {
-        intent.cuisine = c.charAt(0).toUpperCase() + c.slice(1);
-        intent.request_type = 'cuisine';
-        break;
-      }
-    }
-  }
-
-  // PRIORITY 3: If still nothing, try to extract from cleaned query
-  if (!intent.dish && !intent.cuisine) {
-    const cleaned = query.replace(/in (manhattan|brooklyn|queens|bronx|nyc)/gi, '')
-      .replace(/\b(food|restaurant|restaurants|spots?|places?|best|good|find|me|the|a)\b/gi, '').trim();
-    if (cleaned.length > 2) {
-      intent.dish = cleaned;
-      intent.request_type = 'dish';
-    }
-  }
-
-  // Check if we need constraints
-  if ((intent.dish || intent.cuisine) && !intent.borough) {
-    intent.needs_constraint = true;
-    intent.missing_constraint = 'borough';
-    intent.followup_question = 'Where in NYC? (Manhattan, Brooklyn, Queens, Bronx, or Staten Island)';
-  }
-
-  return intent;
-}
-
-// Main intent extraction - Gemini first, fallback to regex
-async function extractIntent(query) {
-  const geminiIntent = await extractIntentWithGemini(query);
-  if (geminiIntent) return geminiIntent;
-
-  console.log('[INTENT] Gemini failed, using regex fallback');
-  return extractIntentFallback(query);
-}
+// Intent extraction removed - now handled by classifyIntentAndFilters in query_router.js
 
 
 // search prompt removed - now in restaurant_prompts.js
@@ -558,8 +390,19 @@ async function searchRestaurants(userId, query, providedFilters = null, foodProf
     };
   }
 
-  // 2. Use provided intent or extract with Gemini
-  let intent = providedIntent || await extractIntent(query);
+  // 2. Intent is now REQUIRED (provided by classifyIntentAndFilters)
+  if (!providedIntent) {
+    console.error('[SEARCH] No intent provided - this should not happen');
+    return {
+      query,
+      intent: { request_type: 'vague' },
+      results: [],
+      count: 0,
+      formattedResponse: 'Something went wrong. Please try your search again.',
+      needsConstraints: false
+    };
+  }
+  let intent = { ...providedIntent };
 
   // 3. Apply provided filters
   if (providedFilters) {
@@ -724,6 +567,5 @@ async function searchRestaurantsDB(filters, limit = 20) {
 module.exports = {
   searchRestaurants,
   formatRestaurantResults,
-  extractIntent,
   searchRestaurantsDB
 };

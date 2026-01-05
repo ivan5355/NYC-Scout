@@ -347,36 +347,6 @@ Do NOT add any extra sentences like "Try X" or "Looking for Y" after the list
 End with EXACTLY this line and nothing else after it: Reply "more" for different options.
 `;
 
-const INTENT_PARSER_PROMPT = (query) => `You are NYC Scout's intent parser. Extract structured intent from this food query.
-
-Query: "${query}"
-
-Return ONLY valid JSON (no markdown, no explanation):
-{
-  "request_type": "dish" | "cuisine" | "occasion" | "vague",
-  "dish": "specific dish name or null",
-  "cuisine": "cuisine type or null", 
-  "borough": "Manhattan" | "Brooklyn" | "Queens" | "Bronx" | "Staten Island" | null,
-  "neighborhood": "specific neighborhood or null",
-  "budget": "cheap" | "mid" | "nice" | "any" | null,
-  "dietary": [],
-  "occasion": "date" | "birthday" | "group" | "quick" | "late-night" | null,
-  "needs_constraint": true | false,
-  "missing_constraint": "borough" | "budget" | null,
-  "followup_question": "single question to ask if needs_constraint is true"
-}
-
-Rules:
-- request_type "dish" = specific food item. IMPORTANT: sushi, omakase, ramen, pho, tacos, pizza, dumplings, biryani, pad thai, burger, dim sum, poke, falafel, shawarma, curry are ALL dishes, not cuisines
-- request_type "cuisine" = broad type of food (Thai, Indian, Italian, Japanese, Chinese, Mexican)
-- request_type "occasion" = event-based (date night, birthday dinner)
-- request_type "vague" = generic (hungry, food, restaurant)
-- CRITICAL: "sushi" is a DISH, not a cuisine. Set dish="sushi", not cuisine="Japanese"
-- CRITICAL: "ramen" is a DISH, not a cuisine. Set dish="ramen", not cuisine="Japanese"
-- Extract borough from neighborhoods (Williamsburg->Brooklyn, Flushing->Queens, Astoria->Queens)
-- If needs_constraint=true, provide exactly ONE followup_question
-- dietary: look for vegetarian, vegan, halal, kosher, gluten-free, nut allergy, no pork`;
-
 const SPOTLIGHT_SEARCH_PROMPT = (restaurantName, borough) => `Research "${restaurantName}" restaurant in ${borough}.
 Return JSON: {"found":true,"name":"","neighborhood":"","borough":"","cuisine":"","price_range":"$20-40","vibe":"","known_for":[],"tips":"","why_good":""}
 If not found: {"found":false}`;
@@ -385,6 +355,5 @@ module.exports = {
     RESTAURANT_SYSTEM_PROMPT,
     NYC_SCOUT_GEMINI_GROUNDED_SEARCH_PROMPT,
     NYC_SCOUT_GEMINI_FORMATTER_PROMPT,
-    INTENT_PARSER_PROMPT,
     SPOTLIGHT_SEARCH_PROMPT
 };
