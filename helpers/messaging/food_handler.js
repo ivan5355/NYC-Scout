@@ -293,43 +293,20 @@ Example: "Brooklyn" or "cheap, casual" or just hit search!`;
   }
 }
 
-async function handleConversationalPreferences(senderId, messageText, profile, context) {
-  console.log(`[PREFERENCES] Parsing user preferences: "${messageText}"`);
+async function handleConversationalPreferences(senderId, messageText, profile, context, detectedFilters = null) {
+  console.log(`[PREFERENCES] Processing user preferences: "${messageText}"`);
 
   const pendingFilters = { ...(context.pendingFilters || {}) };
+
+  if (detectedFilters) {
+    console.log(`[PREFERENCES] Using Gemini-detected filters:`, JSON.stringify(detectedFilters));
+    if (detectedFilters.borough) pendingFilters.borough = detectedFilters.borough;
+    if (detectedFilters.budget) pendingFilters.budget = detectedFilters.budget;
+    if (detectedFilters.vibe) pendingFilters.vibe = detectedFilters.vibe;
+  }
+
+  // Handle "surprise me" or "search" keywords specifically if not caught by Gemini
   const textLower = messageText.toLowerCase();
-
-  if (textLower.includes('manhattan')) pendingFilters.borough = 'Manhattan';
-  else if (textLower.includes('brooklyn')) pendingFilters.borough = 'Brooklyn';
-  else if (textLower.includes('queens')) pendingFilters.borough = 'Queens';
-  else if (textLower.includes('bronx')) pendingFilters.borough = 'Bronx';
-  else if (textLower.includes('staten')) pendingFilters.borough = 'Staten Island';
-  else if (textLower.includes('surprise') || textLower.includes('anywhere') || textLower.includes('any')) {
-    pendingFilters.borough = 'any';
-  } else {
-    pendingFilters.borough = 'any';
-  }
-
-  if (textLower.includes('cheap') || textLower.includes('budget') || textLower.includes('under $20') || textLower.includes('$')) {
-    pendingFilters.budget = '$';
-  } else if (textLower.includes('moderate') || textLower.includes('mid') || textLower.includes('under $40') || textLower.includes('$$')) {
-    pendingFilters.budget = '$$';
-  } else if (textLower.includes('fancy') || textLower.includes('upscale') || textLower.includes('expensive') || textLower.includes('$$$')) {
-    pendingFilters.budget = '$$$';
-  } else {
-    pendingFilters.budget = 'any';
-  }
-
-  if (textLower.includes('casual') || textLower.includes('chill') || textLower.includes('relaxed')) {
-    pendingFilters.vibe = 'casual';
-  } else if (textLower.includes('date') || textLower.includes('romantic')) {
-    pendingFilters.vibe = 'date night';
-  } else if (textLower.includes('trendy') || textLower.includes('hip') || textLower.includes('cool')) {
-    pendingFilters.vibe = 'trendy';
-  } else if (textLower.includes('hidden') || textLower.includes('gem') || textLower.includes('secret')) {
-    pendingFilters.vibe = 'hidden gem';
-  }
-
   if (textLower.includes('surprise') || textLower.includes('search')) {
     const boroughs = ['Manhattan', 'Brooklyn', 'Queens'];
     if (!pendingFilters.borough || pendingFilters.borough === 'any') {
@@ -337,6 +314,10 @@ async function handleConversationalPreferences(senderId, messageText, profile, c
     }
     pendingFilters.budget = pendingFilters.budget || 'any';
   }
+
+  // Fallback defaults if still missing (for borough)
+  if (!pendingFilters.borough) pendingFilters.borough = 'any';
+  if (!pendingFilters.budget) pendingFilters.budget = 'any';
 
   await updateContext(senderId, {
     pendingType: null,

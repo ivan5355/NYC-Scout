@@ -1,7 +1,8 @@
 const {
   classifyIntentAndFilters,
   isReadyToSearch,
-  parseEventFiltersWithGemini
+  parseEventFiltersWithGemini,
+  parseRestaurantFiltersWithGemini
 } = require('./query_router');
 const {
   getOrCreateProfile,
@@ -134,7 +135,19 @@ async function processDM(senderId, messageText, profile, context) {
 
   // Handle restaurant_preferences pending type (user responding with filters like "Brooklyn, cheap")
   if (context?.pendingType === 'restaurant_preferences' && messageText) {
-    const result = await handleConversationalPreferences(senderId, messageText, profile, context);
+    console.log(`[RESTAURANT_PREFERENCES] Parsing text preferences with Gemini: "${messageText}"`);
+    const textLower = messageText.toLowerCase().trim();
+
+    // Check if user just wants to search with current filters
+    if (textLower === 'search' || textLower.includes('just search') || textLower.includes('show me')) {
+      return await handleConversationalPreferences(senderId, messageText, profile, context);
+    }
+
+    // Use Gemini to parse the filters
+    const parsedFilters = await parseRestaurantFiltersWithGemini(messageText);
+
+    // Pass everything to the preferences handler
+    const result = await handleConversationalPreferences(senderId, messageText, profile, context, parsedFilters);
     if (result?.reply) {
       await sendMessage(senderId, result.reply);
     }
@@ -396,7 +409,8 @@ async function processDMForTest(senderId, messageText) {
   }
 
   if (context?.pendingType === 'restaurant_preferences' && messageText) {
-    return await handleConversationalPreferences(senderId, messageText, profile, context);
+    const parsedFilters = await parseRestaurantFiltersWithGemini(messageText);
+    return await handleConversationalPreferences(senderId, messageText, profile, context, parsedFilters);
   }
 
   const lastCategory = context?.lastCategory;

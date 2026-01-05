@@ -516,6 +516,104 @@ function parseEventFiltersFallback(text) {
   return filters;
 }
 
+/* =====================
+   PARSE RESTAURANT FILTERS FROM TEXT (using Gemini)
+   Used when user responds to restaurant_preferences with filters like "Brooklyn, cheap"
+===================== */
+
+async function parseRestaurantFiltersWithGemini(text) {
+  if (!GEMINI_API_KEY) {
+    return parseRestaurantFiltersFallback(text);
+  }
+
+  const prompt = `Extract restaurant search filters from this user message.
+
+User message: "${text}"
+
+Extract these filters if mentioned:
+- borough: "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "any", or null
+- budget: "$", "$$", "$$$", or null (map "cheap" to "$", "moderate/mid" to "$$", "fancy/expensive" to "$$$")
+- vibe: "casual", "date night", "trendy", "hidden gem", or null
+
+Handle variations like:
+- "bk" or "bklyn" → Brooklyn
+- "anywhere" or "any area" → "any" for borough
+- "cheap" or "budget" → "$"
+- "fancy" or "upscale" → "$$$"
+- "chill" or "relaxed" → "casual"
+- "romantic" → "date night"
+
+Return ONLY valid JSON:
+{
+  "borough": "Brooklyn" or null,
+  "budget": "$" or null,
+  "vibe": "hidden gem" or null
+} (any filter not mentioned should be null)`;
+
+  try {
+    const response = await geminiClient.post(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 100, temperature: 0.1 }
+      },
+      { params: { key: GEMINI_API_KEY } }
+    );
+
+    let resultText = response.data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+
+    if (resultText.startsWith('```')) {
+      resultText = resultText.replace(/^```[a-z]*\s*/i, '').replace(/```\s*$/i, '').trim();
+    }
+
+    const parsed = JSON.parse(resultText);
+    console.log(`[RESTAURANT_FILTER_PARSE] Gemini parsed filters:`, parsed);
+
+    return {
+      borough: parsed.borough || null,
+      budget: parsed.budget || null,
+      vibe: parsed.vibe || null
+    };
+  } catch (err) {
+    console.error('[RESTAURANT_FILTER_PARSE] Gemini parsing failed:', err.message);
+    return parseRestaurantFiltersFallback(text);
+  }
+}
+
+function parseRestaurantFiltersFallback(text) {
+  const textLower = text.toLowerCase();
+  const filters = {};
+
+  if (textLower.includes('manhattan')) filters.borough = 'Manhattan';
+  else if (textLower.includes('brooklyn') || textLower.includes('bk')) filters.borough = 'Brooklyn';
+  else if (textLower.includes('queens')) filters.borough = 'Queens';
+  else if (textLower.includes('bronx')) filters.borough = 'Bronx';
+  else if (textLower.includes('staten')) filters.borough = 'Staten Island';
+  else if (textLower.includes('surprise') || textLower.includes('anywhere') || textLower.includes('any')) {
+    filters.borough = 'any';
+  }
+
+  if (textLower.includes('cheap') || textLower.includes('budget') || textLower.includes('$')) {
+    filters.budget = '$';
+  } else if (textLower.includes('moderate') || textLower.includes('mid') || textLower.includes('$$')) {
+    filters.budget = '$$';
+  } else if (textLower.includes('fancy') || textLower.includes('upscale') || textLower.includes('$$$')) {
+    filters.budget = '$$$';
+  }
+
+  if (textLower.includes('casual') || textLower.includes('chill')) {
+    filters.vibe = 'casual';
+  } else if (textLower.includes('date') || textLower.includes('romantic')) {
+    filters.vibe = 'date night';
+  } else if (textLower.includes('trendy')) {
+    filters.vibe = 'trendy';
+  } else if (textLower.includes('hidden') || textLower.includes('gem')) {
+    filters.vibe = 'hidden gem';
+  }
+
+  return filters;
+}
+
 module.exports = {
   loadEventCategories,
   classifyIntentAndFilters,
@@ -523,5 +621,6 @@ module.exports = {
   generateEventFilterPrompt,
   generateRestaurantFilterPrompt,
   isReadyToSearch,
-  parseEventFiltersWithGemini
+  parseEventFiltersWithGemini,
+  parseRestaurantFiltersWithGemini
 };
