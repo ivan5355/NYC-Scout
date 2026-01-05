@@ -127,6 +127,31 @@ function detectSpotlightQuery(query) {
 
 // Intent extraction removed - now handled by classifyIntentAndFilters in query_router.js
 
+// =====================
+// DISH KEYWORD PATTERNS - used by validateResults for evidence matching
+// =====================
+const DISH_PATTERNS = {
+  sushi: /(sushi|omakase|nigiri|sashimi|hand ?roll|temaki)/i,
+  ramen: /(ramen|shoyu|tonkotsu|miso ramen|tsukemen)/i,
+  pho: /\bpho\b/i,
+  tacos: /(tacos?|birria|al pastor|carnitas)/i,
+  pizza: /(pizza|margherita|neapolitan|slice)/i,
+  dumplings: /(dumplings?|xiaolongbao|xiao long bao|soup dumplings?|jiaozi|gyoza|momo)/i,
+  biryani: /biryani/i,
+  pad_thai: /pad thai/i,
+  burger: /(burger|smashburger|cheeseburger)/i,
+  fried_chicken: /(fried chicken|korean fried chicken|kfc style)/i,
+  bagel: /(bagel|lox|schmear)/i,
+  dim_sum: /(dim ?sum|har gow|siu mai|char siu bao)/i,
+  bbq: /(bbq|barbeque|barbecue|brisket|burnt ends)/i,
+  steak: /(steak|steakhouse|ribeye|filet mignon|porterhouse)/i,
+  pasta: /(pasta|carbonara|cacio e pepe|bolognese|amatriciana)/i,
+  poke: /(poke|poke bowl)/i,
+  falafel: /falafel/i,
+  shawarma: /shawarma/i,
+  curry: /(curry|tikka masala|butter chicken|vindaloo|korma)/i
+};
+
 
 // search prompt removed - now in restaurant_prompts.js
 
