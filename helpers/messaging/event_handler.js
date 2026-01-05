@@ -1,6 +1,6 @@
 const { searchEvents, formatEventResults } = require('../search/events');
 const { updateContext, addShownEvents } = require('../users/user_profile');
-const { sendMessage, parseBoroughFromPayload } = require('./messenger_utils');
+const { sendMessage } = require('./messenger_utils');
 
 async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult = false) {
   // Clear pending state before searching
@@ -69,35 +69,7 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
   return true;
 }
 
-async function handleEventCategoryPayload(senderId, payload, pendingQuery, pendingFilters, profile, context, returnResult = false) {
-  if (payload.startsWith('EVENT_PRICE_')) {
-    const priceMap = { 'EVENT_PRICE_free': 'free', 'EVENT_PRICE_budget': 'budget', 'EVENT_PRICE_any': 'any' };
-    pendingFilters.price = priceMap[payload];
-    return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult);
-  }
-
-  if (payload.startsWith('EVENT_CAT_')) {
-    pendingFilters.category = payload.replace('EVENT_CAT_', '');
-    return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult);
-  }
-
-  if (payload.startsWith('EVENT_DATE_')) {
-    const type = payload.replace('EVENT_DATE_', '');
-    pendingFilters.date = type === 'any' ? { type: 'any' } : { type };
-    return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult);
-  }
-
-  if (payload.startsWith('EVENT_BOROUGH_')) {
-    const borough = parseBoroughFromPayload(payload);
-    if (borough !== undefined) pendingFilters.borough = borough;
-    return await runEventSearchWithFilters(senderId, pendingQuery, pendingFilters, profile, context, returnResult);
-  }
-
-  return false;
-}
-
 module.exports = {
-  runEventSearchWithFilters,
-  handleEventCategoryPayload
+  runEventSearchWithFilters
 };
 

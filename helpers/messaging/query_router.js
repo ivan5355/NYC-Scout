@@ -59,10 +59,6 @@ function loadEventCategories() {
    FOLLOW-UP DETECTION
 ===================== */
 
-const FOLLOWUP_PATTERNS = [
-  /^more$/i, /^other$/i, /^another$/i, /^different$/i, /^next$/i,
-  /show me more/i, /something else/i
-];
 
 /* =====================
    MAIN CLASSIFICATION
@@ -74,11 +70,6 @@ async function classifyQuery(userId, text) {
   const t = text.toLowerCase().trim();
   console.log(`[ROUTER] Classifying: "${t}"`);
 
-  // Check follow-up patterns locally
-  if (FOLLOWUP_PATTERNS.some(p => p.test(t))) {
-    console.log(`[ROUTER] Match: FOLLOWUP`);
-    return { type: 'FOLLOWUP' };
-  }
 
   // Use Gemini for classification
   if (GEMINI_API_KEY) {
@@ -274,16 +265,6 @@ async function classifyIntentAndFilters(userId, text) {
   const t = text.toLowerCase().trim();
   console.log(`[INTENT] Classifying intent: "${t}"`);
 
-  // Check follow-up patterns locally
-  if (FOLLOWUP_PATTERNS.some(p => p.test(t))) {
-    console.log(`[INTENT] Match: FOLLOWUP`);
-    return {
-      type: 'FOLLOWUP',
-      detectedFilters: {},
-      missingFilters: [],
-      filterPrompt: null
-    };
-  }
 
   // Use Gemini for classification
   if (GEMINI_API_KEY) {

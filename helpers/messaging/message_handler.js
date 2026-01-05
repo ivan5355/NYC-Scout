@@ -19,7 +19,6 @@ const {
 } = require('../users/user_profile');
 
 const {
-  isMoreRequest,
   getSenderId,
   getIncomingTextOrPayload,
   sendMessage,
@@ -27,8 +26,7 @@ const {
 } = require('./messenger_utils');
 
 const {
-  runEventSearchWithFilters,
-  handleEventCategoryPayload
+  runEventSearchWithFilters
 } = require('./event_handler');
 const {
   answerFoodQuestion,
@@ -72,22 +70,6 @@ function isDuplicateMessage(messageId) {
 /* =====================
    CONSTRAINT GATE HANDLER
 ===================== */
-async function handleConstraintResponse(senderId, payload, profile, context) {
-  console.log(`Handling constraint response: ${payload}`);
-
-  const pendingFilters = context?.pendingFilters ? { ...context.pendingFilters } : {};
-  const pendingQuery = context?.pendingQuery || '';
-  const pendingType = context?.pendingType;
-
-  if (!pendingType) return false;
-
-  if (pendingType === 'restaurant_gate') {
-    await handleRestaurantQueryWithSystemPrompt(senderId, null, payload, profile, context);
-    return true;
-  }
-
-  return await handleEventCategoryPayload(senderId, payload, pendingQuery, pendingFilters, profile, context);
-}
 
 async function handleSystemCommands(senderId, text, returnResult = false) {
   if (!text) return null;
@@ -110,23 +92,6 @@ async function handleSystemCommands(senderId, text, returnResult = false) {
   return null;
 }
 
-async function handleModeSelection(senderId, payload, returnResult = false) {
-  if (payload === 'MODE_FOOD' || payload === 'CATEGORY_FOOD') {
-    const reply = "What are you craving?";
-    if (returnResult) return { reply, category: "SYSTEM" };
-    await sendMessage(senderId, reply);
-    return true;
-  }
-
-  if (payload === 'MODE_EVENTS' || payload === 'CATEGORY_EVENTS') {
-    const reply = "What kind of vibe?";
-    if (returnResult) return { reply, category: "SYSTEM" };
-    await sendMessage(senderId, reply);
-    return true;
-  }
-
-  return null;
-}
 
 /* =====================
    WEBHOOK ENTRYPOINT
@@ -143,7 +108,7 @@ async function handleDM(body) {
   if (!senderId) return;
 
   const incoming = getIncomingTextOrPayload(body);
-  if (!incoming.text && !incoming.payload) return;
+  if (!incoming.text) return;
 
   // Handle special commands BEFORE creating profile
   const systemHandled = await handleSystemCommands(senderId, incoming.text);
@@ -152,56 +117,19 @@ async function handleDM(body) {
   const profile = await getOrCreateProfile(senderId);
   const context = await getContext(senderId);
 
-  // Handle pending constraint gate
-  if (context?.pendingType && incoming.payload) {
-    const handled = await handleConstraintResponse(senderId, incoming.payload, profile, context);
-    if (handled) return;
-  }
 
-  // Handle BOROUGH_ANY
-  if (incoming.payload === 'BOROUGH_ANY') {
-    const cuisine = context?.pendingFilters?.cuisine || context?.lastFilters?.cuisine;
-    if (cuisine) {
-      const searchFilters = {
-        cuisine: cuisine,
-        borough: 'any',
-        budget: context?.pendingFilters?.budget || 'any',
-        isDishQuery: false
-      };
-      await updateContext(senderId, {
-        pendingType: null,
-        pendingFilters: searchFilters,
-        pool: [],
-        page: 0,
-        shownKeys: [],
-        shownNames: []
-      });
-      await handleRestaurantQueryWithSystemPrompt(
-        senderId,
-        cuisine,
-        'BOROUGH_ANY',
-        profile,
-        { ...context, pendingFilters: searchFilters, pool: [], page: 0 }
-      );
-      return;
-    }
-  }
-
-  await processDM(senderId, incoming.text, incoming.payload, profile, context);
+  await processDM(senderId, incoming.text, profile, context);
 }
 
 /* =====================
    MAIN DM PROCESSING (with Intent Classification Flow)
    ===================== */
-async function processDM(senderId, messageText, payload, profile, context) {
-  console.log(`[DM] Processing Instagram DM: "${messageText || payload}"`);
+async function processDM(senderId, messageText, profile, context) {
+  console.log(`[DM] Processing Instagram DM: "${messageText}"`);
 
 
-  if (isMoreRequest(messageText)) {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
-  }
 
-  const socialResult = await handleSocialDM(senderId, messageText, payload, context);
+  const socialResult = await handleSocialDM(senderId, messageText, null, context);
   if (socialResult) {
     if (socialResult.reply) {
       await sendMessage(senderId, socialResult.reply);
@@ -209,12 +137,8 @@ async function processDM(senderId, messageText, payload, profile, context) {
     return;
   }
 
-  // Handle mode selection
-  const modeHandled = await handleModeSelection(senderId, payload);
-  if (modeHandled) return;
-
   // Handle restaurant_preferences pending type (user responding with filters like "Brooklyn, cheap")
-  if (context?.pendingType === 'restaurant_preferences' && messageText && !payload) {
+  if (context?.pendingType === 'restaurant_preferences' && messageText) {
     const result = await handleConversationalPreferences(senderId, messageText, profile, context);
     if (result?.reply) {
       await sendMessage(senderId, result.reply);
@@ -223,7 +147,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
   }
 
   // Handle event_gate text responses (user responding with filters like "Brooklyn this weekend")
-  if (context?.pendingType === 'event_gate' && messageText && !payload) {
+  if (context?.pendingType === 'event_gate' && messageText) {
     console.log(`[EVENT_GATE] Parsing text preferences with Gemini: "${messageText}"`);
     const pendingFilters = { ...(context.pendingFilters || {}) };
     const pendingQuery = context.pendingQuery || '';
@@ -263,7 +187,7 @@ async function processDM(senderId, messageText, payload, profile, context) {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context);
       } else {
-        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context);
       }
     }
   }
@@ -367,7 +291,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
 
     if (hasCuisineOrDish) {
       // We have cuisine/dish - pass to restaurant handler which will ask for remaining filters
-      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context);
     }
 
     // Need to ask for cuisine/dish first
@@ -384,7 +308,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
     }
 
     // Fallback to existing handler
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
   }
 
   // =====================
@@ -395,7 +319,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
   let eventFilters = getEventFilters(classificationResult);
 
   if (category === 'FOOD_SEARCH' || category === 'FOOD_SPOTLIGHT' || category === 'RESTAURANT') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context);
   }
 
   if (category === 'FOOD_QUESTION') {
@@ -417,7 +341,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
   }
 
   // Handle Get Started or generic greetings
-  const isGreeting = (payload === 'GET_STARTED') || (messageText && /^(hi|hello|hey|yo|greetings|get started)$/i.test(messageText.trim()));
+  const isGreeting = (messageText && /^(hi|hello|hey|yo|greetings|get started)$/i.test(messageText.trim()));
 
   if (isGreeting) {
     const welcome = "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?";
@@ -431,14 +355,9 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
 /* =====================
    TEST-FRIENDLY VERSION
 ===================== */
-async function processDMForTest(senderId, messageText, payload = null) {
-  console.log(`[TEST] ${senderId}: ${messageText || payload}`);
+async function processDMForTest(senderId, messageText) {
+  console.log(`[TEST] ${senderId}: ${messageText}`);
 
-  if (isMoreRequest(messageText)) {
-    const profile = await getOrCreateProfile(senderId);
-    const context = await getContext(senderId);
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
-  }
 
   const systemResult = await handleSystemCommands(senderId, messageText, true);
   if (systemResult) return systemResult;
@@ -446,19 +365,9 @@ async function processDMForTest(senderId, messageText, payload = null) {
   const profile = await getOrCreateProfile(senderId);
   const context = await getContext(senderId);
 
-  if (context?.pendingType && payload) {
-    if (context.pendingType === 'restaurant_gate') {
-      return await handleRestaurantQueryWithSystemPrompt(senderId, null, payload, profile, context, true);
-    }
-    if (payload.startsWith('EVENT_')) {
-      const pendingFilters = { ...(context.pendingFilters || {}) };
-      const pendingQuery = context.pendingQuery || '';
-      return await handleEventCategoryPayload(senderId, payload, pendingQuery, pendingFilters, profile, context, true);
-    }
-  }
 
   // Handle event_gate text responses (user types instead of clicking buttons)
-  if (context?.pendingType === 'event_gate' && messageText && !payload) {
+  if (context?.pendingType === 'event_gate' && messageText) {
     console.log(`[EVENT_GATE] Parsing text preferences with Gemini: "${messageText}"`);
     const pendingFilters = { ...(context.pendingFilters || {}) };
     const pendingQuery = context.pendingQuery || '';
@@ -481,7 +390,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
     await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
   }
 
-  if (context?.pendingType === 'restaurant_preferences' && messageText && !payload) {
+  if (context?.pendingType === 'restaurant_preferences' && messageText) {
     return await handleConversationalPreferences(senderId, messageText, profile, context);
   }
 
@@ -513,7 +422,7 @@ async function processDMForTest(senderId, messageText, payload = null) {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context, true);
       } else {
-        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context, true);
       }
     }
   }
@@ -607,7 +516,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
     const hasCuisineOrDish = detectedFilters.cuisine || detectedFilters.dish;
 
     if (hasCuisineOrDish) {
-      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context, true);
     }
 
     if (filterPrompt) {
@@ -619,7 +528,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
       });
       return { reply: filterPrompt.text, category: 'RESTAURANT' };
     }
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
   }
 
   // FALLBACK TO OLD CLASSIFICATION
@@ -628,7 +537,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
   let eventFilters = getEventFilters(classificationResult);
 
   if (category === 'FOOD_SEARCH' || category === 'RESTAURANT' || category === 'FOOD_SPOTLIGHT') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, true);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context, true);
   }
 
   if (category === 'EVENT') {
@@ -641,13 +550,10 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
     return { reply: answer, category };
   }
 
-  const socialResult = await handleSocialDM(senderId, messageText, payload, context);
+  const socialResult = await handleSocialDM(senderId, messageText, null, context);
   if (socialResult) return socialResult;
 
-  const modeResult = await handleModeSelection(senderId, payload, true);
-  if (modeResult) return modeResult;
-
-  if (context?.pendingType === 'restaurant_gate' && messageText && !payload) {
+  if (context?.pendingType === 'restaurant_gate' && messageText) {
     const textBorough = parseBoroughFromText(messageText);
     if (textBorough !== undefined) {
       const pendingFilters = { ...(context.pendingFilters || {}) };

@@ -10,7 +10,6 @@ const { updateContext, addShownRestaurants } = require('../users/user_profile');
 const {
   geminiClient,
   sendMessage,
-  isMoreRequest,
   parseBoroughFromText,
   GEMINI_API_KEY
 } = require('./messenger_utils');
@@ -68,93 +67,14 @@ Answer:`;
 // showFilterMenu removed - now using text-only prompts
 
 
-async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, payload, profile, context, returnResult = false) {
+async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, returnResult = false) {
   const today = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' });
 
-  const isMoreFollowUp = isMoreRequest(messageText);
 
-  if (isMoreFollowUp) {
-    console.log(`[MORE] Detected "more" request: "${messageText}"`);
-    if (context?.pool?.length > 0) {
-      const currentPage = context.page || 0;
-      const nextPage = currentPage + 1;
-      const pageSize = 5;
-      const startIdx = nextPage * pageSize;
-      const batch = context.pool.slice(startIdx, startIdx + pageSize);
-
-      if (batch.length > 0) {
-        console.log(`[MORE] Serving page ${nextPage} from pool (${batch.length} items, pool size: ${context.pool.length})`);
-
-        let formatted = batch.map((r, i) => {
-          let entry = `${i + 1}. ${(r.name || '').toUpperCase()}\n`;
-          entry += `📍 ${r.neighborhood || ''}, ${r.borough || ''}\n`;
-          if (r.price_range) entry += `💰 ${r.price_range}`;
-          if (r.vibe) entry += ` · ${r.vibe}`;
-          entry += '\n';
-          if (r.what_to_order?.length) entry += `🍽️ ${r.what_to_order.slice(0, 2).join(', ')}\n`;
-          if (r.why) entry += `💡 ${r.why}`;
-          return entry.trim();
-        }).join('\n\n');
-
-        const hasMoreAfterThis = context.pool.length > (startIdx + batch.length);
-        if (hasMoreAfterThis) {
-          formatted += '\n\nReply "more" for different options.';
-        } else {
-          formatted += '\n\nThat\'s all I have for this search.';
-        }
-
-        await updateContext(senderId, {
-          page: nextPage,
-          shownKeys: [...(context.shownKeys || []), ...batch.map(r => r.dedupeKey).filter(Boolean)],
-          shownNames: [...(context.shownNames || []), ...batch.map(r => r.name).filter(Boolean)]
-        });
-
-        if (returnResult) {
-          return { reply: formatted, category: 'RESTAURANT' };
-        }
-        await sendMessage(senderId, formatted);
-        return;
-      }
-
-      console.log('[MORE] Pool exhausted');
-      const dish = context.lastIntent?.dish || context.lastIntent?.cuisine || context.lastIntent?.dish_or_cuisine || 'that';
-      const exhaustedMsg = `That's all I have for this search. Want to try a different borough or a slightly different dish?`;
-
-      await updateContext(senderId, {
-        pool: [],
-        page: 0,
-        pendingType: 'restaurant_gate',
-        pendingQuery: dish,
-        pendingFilters: { cuisine: dish }
-      });
-
-      if (returnResult) {
-        return { reply: exhaustedMsg, category: 'RESTAURANT' };
-      }
-      await sendMessage(senderId, exhaustedMsg);
-      return;
-    }
-
-    console.log('[MORE] No pool available, asking what user wants');
-    const noPoolMsg = "What would you like more of? Tell me a dish or cuisine.";
-    if (returnResult) return { reply: noPoolMsg, category: 'RESTAURANT' };
-    await sendMessage(senderId, noPoolMsg);
-    return;
-  }
-
-  const isConstraintResponse = payload && (
-    payload.startsWith('BOROUGH_') ||
-    payload.startsWith('BUDGET_') ||
-    payload.startsWith('CUISINE_') ||
-    payload.startsWith('FILTER_') ||
-    payload.startsWith('VIBE_') ||
-    payload.startsWith('SET_') ||
-    payload === 'SHOW_TOP_5'
-  );
 
   let intent;
   try {
-    intent = await extractIntent(messageText || payload || '');
+    intent = await extractIntent(messageText || '');
   } catch (err) {
     console.error('[RESTAURANTS] extractIntent failed:', err.message);
     intent = { request_type: 'vague', dish: null, cuisine: null };
@@ -170,7 +90,7 @@ async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, payl
     isDishQuery: hasDish
   };
 
-  const isNewSearch = messageText && !isConstraintResponse;
+  const isNewSearch = !!messageText;
 
   if (dishOrCuisine && !['best', 'good', 'food', 'restaurant', 'restaurants', 'find', 'me', 'the'].includes(dishOrCuisine.toLowerCase())) {
     filters.cuisine = dishOrCuisine;
@@ -192,97 +112,6 @@ async function handleRestaurantQueryWithSystemPrompt(senderId, messageText, payl
     filters.budget = intent.budget || context?.pendingFilters?.budget || context?.lastFilters?.budget;
   }
 
-  const isFilterPayload = payload && payload.startsWith('FILTER_');
-
-  if (isConstraintResponse || payload === 'SHOW_TOP_5' || isFilterPayload) {
-    if (!filters.cuisine && context?.pendingFilters?.cuisine) {
-      filters.cuisine = context.pendingFilters.cuisine;
-      filters.isDishQuery = context.pendingFilters.isDishQuery || false;
-    }
-
-    if (context?.pendingFilters?.borough) filters.borough = context.pendingFilters.borough;
-    if (context?.pendingFilters?.budget) filters.budget = context.pendingFilters.budget;
-    if (context?.pendingFilters?.vibe) filters.vibe = context.pendingFilters.vibe;
-
-    if (payload === 'SHOW_TOP_5' || payload === 'FILTER_TOP_RATED') {
-      filters.borough = 'any';
-      filters.budget = 'any';
-      filters.vibe = 'top rated';
-    } else if (payload === 'FILTER_SURPRISE') {
-      const boroughs = ['Manhattan', 'Brooklyn', 'Queens'];
-      filters.borough = boroughs[Math.floor(Math.random() * boroughs.length)];
-      filters.budget = 'any';
-    } else if (payload === 'FILTER_SEARCH_NOW') {
-      if (!filters.borough) filters.borough = 'any';
-      if (!filters.budget) filters.budget = 'any';
-    } else if (payload === 'FILTER_LOCATION') {
-      const question = `📍 Which area? (Manhattan, Brooklyn, Queens, Bronx, or Staten Island)`;
-      if (returnResult) return { reply: question, category: 'RESTAURANT' };
-      await sendMessage(senderId, question);
-      return;
-    } else if (payload === 'FILTER_BUDGET') {
-      const question = `💰 What's your budget? ($, $$, $$$, or $$$$)`;
-      if (returnResult) return { reply: question, category: 'RESTAURANT' };
-      await sendMessage(senderId, question);
-      return;
-    } else if (payload === 'FILTER_VIBE') {
-      const question = `✨ What vibe? (casual, date night, trendy, or hidden gem)`;
-      if (returnResult) return { reply: question, category: 'RESTAURANT' };
-      await sendMessage(senderId, question);
-      return;
-    } else if (payload && payload.startsWith('SET_BOROUGH_')) {
-      const boroughMap = {
-        'SET_BOROUGH_MANHATTAN': 'Manhattan', 'SET_BOROUGH_BROOKLYN': 'Brooklyn',
-        'SET_BOROUGH_QUEENS': 'Queens', 'SET_BOROUGH_BRONX': 'Bronx',
-        'SET_BOROUGH_STATEN': 'Staten Island', 'SET_BOROUGH_ANY': 'any'
-      };
-      filters.borough = boroughMap[payload] || 'any';
-      await updateContext(senderId, { pendingFilters: { ...context?.pendingFilters, cuisine: filters.cuisine, borough: filters.borough } });
-      const prompt = `🍜 ${filters.cuisine}! I'll look in ${filters.borough}. Anything else (budget, vibe)? Or just say "search"!`;
-      if (returnResult) return { reply: prompt, category: 'RESTAURANT' };
-      await sendMessage(senderId, prompt);
-      return;
-    } else if (payload && payload.startsWith('SET_BUDGET_')) {
-      const budgetMap = { 'SET_BUDGET_$': 'Under $20', 'SET_BUDGET_$$': '$20-40', 'SET_BUDGET_$$$': '$40-80', 'SET_BUDGET_$$$$': '$80+', 'SET_BUDGET_ANY': 'any' };
-      filters.budget = budgetMap[payload] || 'any';
-      await updateContext(senderId, { pendingFilters: { ...context?.pendingFilters, cuisine: filters.cuisine, budget: filters.budget } });
-      const prompt = `🍜 ${filters.cuisine}! I'll filter for ${filters.budget} budget. Anything else (location, vibe)? Or just say "search"!`;
-      if (returnResult) return { reply: prompt, category: 'RESTAURANT' };
-      await sendMessage(senderId, prompt);
-      return;
-    } else if (payload && payload.startsWith('SET_VIBE_')) {
-      const vibeMap = {
-        'SET_VIBE_CASUAL': 'Casual', 'SET_VIBE_DATE': 'Date night',
-        'SET_VIBE_TRENDY': 'Trendy', 'SET_VIBE_HIDDEN': 'Hidden gem', 'SET_VIBE_ANY': 'any'
-      };
-      filters.vibe = vibeMap[payload] || 'any';
-      await updateContext(senderId, { pendingFilters: { ...context?.pendingFilters, cuisine: filters.cuisine, vibe: filters.vibe } });
-      const prompt = `🍜 ${filters.cuisine}! I'll look for ${filters.vibe} vibes. Anything else (location, budget)? Or just say "search"!`;
-      if (returnResult) return { reply: prompt, category: 'RESTAURANT' };
-      await sendMessage(senderId, prompt);
-      return;
-    } else if (payload && payload.startsWith('VIBE_')) {
-      const vibeMap = { 'VIBE_CASUAL': 'Casual', 'VIBE_DATE': 'Date night', 'VIBE_TRENDY': 'Trendy', 'VIBE_HIDDEN': 'Hidden gem', 'VIBE_ANY': 'any' };
-      filters.vibe = vibeMap[payload] || 'any';
-      filters.borough = filters.borough || 'any';
-      filters.budget = filters.budget || 'any';
-    } else if (payload && payload.startsWith('BOROUGH_')) {
-      const boroughMap = {
-        'BOROUGH_MANHATTAN': 'Manhattan', 'BOROUGH_BROOKLYN': 'Brooklyn',
-        'BOROUGH_QUEENS': 'Queens', 'BOROUGH_BRONX': 'Bronx',
-        'BOROUGH_STATEN': 'Staten Island', 'BOROUGH_ANY': 'any'
-      };
-      filters.borough = boroughMap[payload] || filters.borough;
-      if (!filters.budget) filters.budget = 'any';
-    } else if (payload && payload.startsWith('BUDGET_')) {
-      const budgetMap = { 'BUDGET_$': '$', 'BUDGET_$$': '$$', 'BUDGET_$$$': '$$$', 'BUDGET_$$$$': '$$$$', 'BUDGET_ANY': 'any' };
-      filters.budget = budgetMap[payload] || filters.budget;
-      if (!filters.borough) filters.borough = 'any';
-    } else if (payload && payload.startsWith('CUISINE_')) {
-      filters.cuisine = payload.replace('CUISINE_', '').replace(/_/g, ' ');
-      filters.isDishQuery = false;
-    }
-  }
 
   const genericWords = ['best', 'good', 'nice', 'great', 'amazing', 'food', 'restaurant', 'restaurants', 'spots', 'places', 'hungry', 'eat', 'dinner', 'lunch', 'breakfast'];
   const cleanCuisine = (filters.cuisine || '').toLowerCase().trim();
@@ -384,7 +213,7 @@ Example: "Manhattan, under $30, casual"`;
   let fullPrompt = RESTAURANT_SYSTEM_PROMPT
     .replace('{{TODAY_DATE}}', today)
     .replace('{{USER_MESSAGE}}', messageText || '')
-    .replace('{{USER_PAYLOAD}}', payload || '')
+    .replace('{{USER_PAYLOAD}}', '')
     .replace('{{USER_PROFILE_JSON}}', JSON.stringify(profile.foodProfile || {}))
     .replace('{{USER_CONTEXT_JSON}}', JSON.stringify(context || {}))
     .replace('{{DB_RESTAURANTS_JSON}}', JSON.stringify(dbRestaurants))
@@ -440,7 +269,7 @@ Example: "Manhattan, under $30, casual"`;
         const promptWithSnippets = RESTAURANT_SYSTEM_PROMPT
           .replace('{{TODAY_DATE}}', today)
           .replace('{{USER_MESSAGE}}', messageText || '')
-          .replace('{{USER_PAYLOAD}}', payload || '')
+          .replace('{{USER_PAYLOAD}}', '')
           .replace('{{USER_PROFILE_JSON}}', JSON.stringify(profile.foodProfile || {}))
           .replace('{{USER_CONTEXT_JSON}}', JSON.stringify(context || {}))
           .replace('{{DB_RESTAURANTS_JSON}}', JSON.stringify(dbRestaurants))
@@ -462,7 +291,7 @@ Example: "Manhattan, under $30, casual"`;
         }
 
         if (resultText.startsWith('{') && resultText.includes('NEED_RESEARCH')) {
-          const searchResult = await searchRestaurants(senderId, messageText || payload || '', filters, profile?.foodProfile, context, true);
+          const searchResult = await searchRestaurants(senderId, messageText || '', filters, profile?.foodProfile, context, true);
           const formatted = formatRestaurantResults(searchResult);
 
           if (returnResult) {
@@ -473,7 +302,7 @@ Example: "Manhattan, under $30, casual"`;
         }
       } catch (e) {
         console.error('Failed to parse research JSON or fetch snippets:', e.message);
-        const searchResult = await searchRestaurants(senderId, messageText || payload || '', filters, profile?.foodProfile, context, true);
+        const searchResult = await searchRestaurants(senderId, messageText || '', filters, profile?.foodProfile, context, true);
         const formatted = formatRestaurantResults(searchResult);
 
         if (returnResult) {
