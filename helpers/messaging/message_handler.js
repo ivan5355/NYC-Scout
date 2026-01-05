@@ -187,7 +187,7 @@ async function processDM(senderId, messageText, profile, context) {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context);
       } else {
-        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context);
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
       }
     }
   }
@@ -291,7 +291,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
 
     if (hasCuisineOrDish) {
       // We have cuisine/dish - pass to restaurant handler which will ask for remaining filters
-      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
     }
 
     // Need to ask for cuisine/dish first
@@ -319,7 +319,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
   let eventFilters = getEventFilters(classificationResult);
 
   if (category === 'FOOD_SEARCH' || category === 'FOOD_SPOTLIGHT' || category === 'RESTAURANT') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
   }
 
   if (category === 'FOOD_QUESTION') {
@@ -422,7 +422,7 @@ async function processDMForTest(senderId, messageText) {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context, true);
       } else {
-        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context, true);
+        return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
       }
     }
   }
@@ -516,7 +516,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
     const hasCuisineOrDish = detectedFilters.cuisine || detectedFilters.dish;
 
     if (hasCuisineOrDish) {
-      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context, true);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
     }
 
     if (filterPrompt) {
@@ -537,7 +537,7 @@ Example: "comedy in Brooklyn this weekend" or "free concerts tonight"`;
   let eventFilters = getEventFilters(classificationResult);
 
   if (category === 'FOOD_SEARCH' || category === 'RESTAURANT' || category === 'FOOD_SPOTLIGHT') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, null, profile, context, true);
+    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
   }
 
   if (category === 'EVENT') {

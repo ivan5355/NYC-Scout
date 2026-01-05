@@ -16,7 +16,9 @@ const geminiClient = axios.create({
   httpsAgent: new https.Agent({ keepAlive: true }),
 });
 
-// Get sender ID from webhook body
+/**
+ * Get sender ID from webhook body
+ */
 function getSenderId(body) {
   const entry = body?.entry?.[0];
   const msg = entry?.messaging?.[0];
@@ -24,7 +26,9 @@ function getSenderId(body) {
   return (id && id !== 'null' && id !== 'undefined') ? String(id) : null;
 }
 
-// Get incoming text or payload from webhook body
+/**
+ * Get incoming text from webhook body
+ */
 function getIncomingTextOrPayload(body) {
   const entry = body?.entry?.[0];
   const msg = entry?.messaging?.[0];
@@ -33,9 +37,9 @@ function getIncomingTextOrPayload(body) {
   };
 }
 
-// Parse borough from payload
-
-// Parse borough from text
+/**
+ * Parse borough from text
+ */
 function parseBoroughFromText(text) {
   if (!text) return null;
   const t = text.toLowerCase();
@@ -54,40 +58,27 @@ function parseBoroughFromText(text) {
   return undefined;
 }
 
+/**
+ * Send a text message via Instagram Graph API
+ */
 async function sendMessage(recipientId, text) {
-  const textStr = typeof text === 'string' ? text : String(text || '');
-  const isTokenValid = PAGE_ACCESS_TOKEN && PAGE_ACCESS_TOKEN !== 'null' && PAGE_ACCESS_TOKEN !== 'undefined';
+  const textStr = String(text || '').trim();
+  if (!textStr || !recipientId || recipientId === 'null') return;
 
-  if (!isTokenValid) {
-    console.log('[DEV MODE] No valid PAGE_ACCESS_TOKEN. Recipient:', recipientId, 'Text:', textStr.substring(0, 50) + '...');
+  if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === 'null') {
+    console.log('[DEBUG] No token. Message hint:', textStr.substring(0, 30));
     return;
   }
 
-  if (!recipientId || recipientId === 'null' || recipientId === 'undefined') {
-    console.error('Cannot send message: recipientId is missing or invalid');
-    return;
-  }
-
-  const safeText = textStr.length > 1000 ? textStr.substring(0, 997) + '...' : (textStr || '(Empty message)');
+  // Instagram max 1000 characters
+  const safeText = textStr.length > 1000 ? textStr.substring(0, 997) + '...' : textStr;
   const payload = { recipient: { id: recipientId }, message: { text: safeText } };
 
-
-  console.log('📤 Sending to Instagram API:');
-  console.log('   Recipient ID:', recipientId);
-  console.log('   Text length:', safeText?.length || 0);
-
   try {
-    await graphClient.post('https://graph.facebook.com/v18.0/me/messages', payload, {
-      params: { access_token: PAGE_ACCESS_TOKEN }
-    });
-    console.log(`✅ Successfully sent message to ${recipientId}`);
+    await graphClient.post(`https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, payload);
+    console.log(`Sent message to ${recipientId}`);
   } catch (err) {
-    const apiError = err.response?.data?.error;
-    if (apiError) {
-      console.error('❌ Instagram API Error:', apiError.message, `(Code: ${apiError.code}, Type: ${apiError.type})`);
-    } else {
-      console.error('❌ Send failed:', err.message);
-    }
+    console.error('Instagram Error:', err.response?.data?.error?.message || err.message);
   }
 }
 
