@@ -38,7 +38,7 @@ app.get('/instagram', (req, res) => {
 // Instagram Webhook Handler (POST)
 app.post('/instagram', async (req, res) => {
   console.log('📩 Incoming webhook:', JSON.stringify(req.body, null, 2));
-  
+
   try {
     await handleDM(req.body);
     res.sendStatus(200);
@@ -50,21 +50,20 @@ app.post('/instagram', async (req, res) => {
 
 // Chat endpoint (used by frontend)
 app.post('/api/chat', async (req, res) => {
-  const { message, userId, payload } = req.body;
-  
+  const { message, userId } = req.body;
+
   if (!userId) {
     return res.status(400).json({ error: 'userId is required' });
   }
 
-  console.log('💬 Chat:', { userId, message, payload });
+  console.log('💬 Chat:', { userId, message });
 
   try {
-    const result = await processDMForTest(userId, message || null, payload || null);
-    
+    const result = await processDMForTest(userId, message || null);
+
     res.json({
       reply: result.reply || "I'm not sure how to respond to that.",
-      category: result.category || 'OTHER',
-      buttons: result.buttons || null
+      category: result.category || 'OTHER'
     });
   } catch (err) {
     console.error('❌ Chat error:', err.message);
@@ -72,24 +71,6 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// Test endpoint to simulate DM
-app.post('/api/test-dm', async (req, res) => {
-  const { senderId, text, payload } = req.body;
-  
-  if (!senderId) {
-    return res.status(400).json({ error: 'senderId is required' });
-  }
-
-  console.log('🧪 Test DM:', { senderId, text, payload });
-
-  try {
-    const result = await processDMForTest(senderId, text || null, payload || null);
-    res.json(result);
-  } catch (err) {
-    console.error('❌ Error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -105,7 +86,6 @@ if (process.env.NODE_ENV !== 'production') {
   🌐 Server running at: http://localhost:${PORT}
   📩 Instagram webhook: http://localhost:${PORT}/instagram
   💬 Chat endpoint:     POST http://localhost:${PORT}/api/chat
-  🧪 Test endpoint:     POST http://localhost:${PORT}/api/test-dm
   ❤️ Health check:      http://localhost:${PORT}/api/health
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     `);
