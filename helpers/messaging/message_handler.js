@@ -1,7 +1,4 @@
 const {
-  classifyQuery,
-  getClassificationType,
-  getEventFilters,
   classifyIntentAndFilters,
   isReadyToSearch,
   parseEventFiltersWithGemini
@@ -329,25 +326,13 @@ Example: "Brooklyn this weekend" or just "search"`;
   }
 
   // =====================
-  // FALLBACK TO ORIGINAL CLASSIFICATION (for edge cases)
+  // FOOD QUESTION FLOW
   // =====================
-  const classificationResult = await classifyQuery(senderId, messageText);
-  let category = getClassificationType(classificationResult);
-  let eventFilters = getEventFilters(classificationResult);
-
-  if (category === 'FOOD_SEARCH' || category === 'FOOD_SPOTLIGHT' || category === 'RESTAURANT') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context);
-  }
-
-  if (category === 'FOOD_QUESTION') {
+  if (intentResult.type === 'FOOD_QUESTION') {
     const answer = await answerFoodQuestion(messageText, context);
     await sendMessage(senderId, answer);
-    await updateContext(senderId, { lastCategory: category, pendingType: null });
+    await updateContext(senderId, { lastCategory: 'FOOD_QUESTION', pendingType: null });
     return;
-  }
-
-  if (category === 'EVENT') {
-    return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context);
   }
 
   // Social appreciation / Emojis
@@ -565,23 +550,11 @@ Example: "Brooklyn this weekend" or just "search"`;
     return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
   }
 
-  // FALLBACK TO OLD CLASSIFICATION
-  const classificationResult = await classifyQuery(senderId, messageText);
-  let category = getClassificationType(classificationResult);
-  let eventFilters = getEventFilters(classificationResult);
-
-  if (category === 'FOOD_SEARCH' || category === 'RESTAURANT' || category === 'FOOD_SPOTLIGHT') {
-    return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, true);
-  }
-
-  if (category === 'EVENT') {
-    return await runEventSearchWithFilters(senderId, messageText, eventFilters, profile, context, true);
-  }
-
-  if (category === 'FOOD_QUESTION') {
+  // FOOD QUESTION FLOW
+  if (intentResult.type === 'FOOD_QUESTION') {
     const answer = await answerFoodQuestion(messageText, context);
     await updateContext(senderId, { lastCategory: 'FOOD_QUESTION', pendingType: null });
-    return { reply: answer, category };
+    return { reply: answer, category: 'FOOD_QUESTION' };
   }
 
   const socialResult = await handleSocialDM(senderId, messageText, null, context);
