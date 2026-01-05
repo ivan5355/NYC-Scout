@@ -37,26 +37,6 @@ function getIncomingTextOrPayload(body) {
   };
 }
 
-/**
- * Parse borough from text
- */
-function parseBoroughFromText(text) {
-  if (!text) return null;
-  const t = text.toLowerCase();
-  const boroughMap = {
-    'manhattan': 'Manhattan', 'midtown': 'Manhattan', 'downtown': 'Manhattan',
-    'uptown': 'Manhattan', 'harlem': 'Manhattan', 'soho': 'Manhattan',
-    'brooklyn': 'Brooklyn', 'williamsburg': 'Brooklyn',
-    'queens': 'Queens', 'flushing': 'Queens', 'astoria': 'Queens', 'jackson heights': 'Queens',
-    'bronx': 'Bronx',
-    'staten island': 'Staten Island', 'staten': 'Staten Island',
-    'anywhere': 'any', 'any': 'any', 'all': 'any'
-  };
-  for (const [key, val] of Object.entries(boroughMap)) {
-    if (t.includes(key)) return val;
-  }
-  return undefined;
-}
 
 /**
  * Send a text message via Instagram Graph API
