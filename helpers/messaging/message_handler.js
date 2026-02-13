@@ -192,7 +192,18 @@ async function processDM(senderId, messageText, profile, context) {
   // Step 3: Ask for missing filters OR run search
   // =====================
   console.log(`[DM INTENT] Starting intent classification for: "${messageText}"`);
-  const intentResult = await classifyIntentAndFilters(senderId, messageText);
+  
+  let intentResult;
+  try {
+    intentResult = await classifyIntentAndFilters(senderId, messageText);
+  } catch (err) {
+    if (err.response?.status === 429) {
+      console.log('[RATE LIMIT] Gemini rate limited - sending fallback response');
+      await sendMessage(senderId, "I'm getting a lot of messages right now! Try again in a moment. 🗽");
+      return;
+    }
+    throw err;
+  }
   console.log(`[DM INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}, Filters:`, JSON.stringify(intentResult.detectedFilters));
 
   // Handle follow-up mode

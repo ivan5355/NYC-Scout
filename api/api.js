@@ -43,6 +43,12 @@ app.post('/instagram', async (req, res) => {
     await handleDM(req.body);
     res.sendStatus(200);
   } catch (err) {
+    // Handle rate limiting from Gemini API
+    if (err.response?.status === 429) {
+      console.log('[RATE LIMIT] Bypassing intent classification - rate limited');
+      res.status(200).send('RATE_LIMITED');
+      return;
+    }
     console.error('❌ Error handling DM:', err.message);
     res.sendStatus(500);
   }
