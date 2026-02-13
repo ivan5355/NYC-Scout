@@ -136,15 +136,28 @@ async function handleDM(body) {
 
   console.log('[handleDM] Processing message from', senderId, ':', incoming.text);
 
-  // Handle special commands BEFORE creating profile
-  const systemHandled = await handleSystemCommands(senderId, incoming.text);
-  if (systemHandled) return;
+  try {
+    // Handle special commands BEFORE creating profile
+    const systemHandled = await handleSystemCommands(senderId, incoming.text);
+    if (systemHandled) return;
 
-  const profile = await getOrCreateProfile(senderId);
-  const context = await getContext(senderId);
+    const profile = await getOrCreateProfile(senderId);
+    console.log('[handleDM] Profile loaded:', !!profile);
+    
+    const context = await getContext(senderId);
+    console.log('[handleDM] Context loaded:', JSON.stringify(context));
 
-
-  await processDM(senderId, incoming.text, profile, context);
+    await processDM(senderId, incoming.text, profile, context);
+    console.log('[handleDM] processDM completed');
+  } catch (err) {
+    console.error('[handleDM] ERROR:', err.message, err.stack);
+    // Try to send error message to user so they know something went wrong
+    try {
+      await sendMessage(senderId, "Sorry, something went wrong! Try again in a moment.");
+    } catch (sendErr) {
+      console.error('[handleDM] Failed to send error message:', sendErr.message);
+    }
+  }
 }
 
 /* =====================

@@ -43,10 +43,15 @@ function getIncomingTextOrPayload(body) {
  */
 async function sendMessage(recipientId, text) {
   const textStr = String(text || '').trim();
-  if (!textStr || !recipientId || recipientId === 'null') return;
+  if (!textStr || !recipientId || recipientId === 'null') {
+    console.log('[sendMessage] Skipped - missing text or recipientId');
+    return;
+  }
+
+  console.log('[sendMessage] Sending to', recipientId, ':', textStr.substring(0, 50));
 
   if (!PAGE_ACCESS_TOKEN || PAGE_ACCESS_TOKEN === 'null') {
-    console.log('[DEBUG] No token. Message hint:', textStr.substring(0, 30));
+    console.log('[sendMessage] ERROR: No PAGE_ACCESS_TOKEN set!');
     return;
   }
 
