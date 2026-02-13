@@ -1,21 +1,19 @@
 /**
- * NYC Scout API Server
+ * NYC Scout API Server (Instagram Only)
  * Run with: node api/api.js
  */
 
 const express = require('express');
 const bodyParser = require('body-parser');
-const cors = require('cors');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 
-const { handleDM, processDMForTest } = require('../helpers/messaging/message_handler');
+const { handleDM } = require('../helpers/messaging/message_handler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middleware
-app.use(cors());
 app.use(bodyParser.json());
 
 // Instagram Webhook Verification (GET)
@@ -54,30 +52,6 @@ app.post('/instagram', async (req, res) => {
   }
 });
 
-// Chat endpoint (used by frontend)
-app.post('/api/chat', async (req, res) => {
-  const { message, userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: 'userId is required' });
-  }
-
-  console.log('💬 Chat:', { userId, message });
-
-  try {
-    const result = await processDMForTest(userId, message || null);
-
-    res.json({
-      reply: result.reply || "I'm not sure how to respond to that.",
-      category: result.category || 'OTHER'
-    });
-  } catch (err) {
-    console.error('❌ Chat error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -87,11 +61,10 @@ app.get('/api/health', (req, res) => {
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`
-  🗽 NYC Scout API Server
+  🗽 NYC Scout API Server (Instagram Only)
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   🌐 Server running at: http://localhost:${PORT}
   📩 Instagram webhook: http://localhost:${PORT}/instagram
-  💬 Chat endpoint:     POST http://localhost:${PORT}/api/chat
   ❤️ Health check:      http://localhost:${PORT}/api/health
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     `);

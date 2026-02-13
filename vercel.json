@@ -2,24 +2,18 @@
   "version": 2,
   "builds": [
     {
-      "src": "frontend/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
-    },
-    {
       "src": "api/api.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/api.js" },
-    { "src": "/instagram", "dest": "/api/api.js" },
-    { "src": "/privacy-policy", "dest": "/api/api.js" },
-    { "src": "/terms-of-service", "dest": "/api/api.js" },
-    { "src": "/events/(.*)", "dest": "/api/api.js" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/frontend/$1" }
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/api.js"
+    },
+    {
+      "src": "/instagram",
+      "dest": "/api/api.js"
+    }
   ]
 }

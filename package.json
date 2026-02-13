@@ -6,9 +6,7 @@
   "scripts": {
     "start": "node api/api.js",
     "dev": "node api/api.js",
-    "build:frontend": "cd frontend && npm install && npm run build",
-    "dev:frontend": "cd frontend && npm run dev",
-    "build": "npm run build:frontend",
+    "build": "echo \"No build step needed\"",
     "sync:events": "node scripts/get_recent_events.js",
     "test": "jest",
     "test:watch": "jest --watch"
@@ -17,7 +15,6 @@
     "axios": "^1.7.9",
     "body-parser": "^1.20.2",
     "cheerio": "^1.1.2",
-    "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.19.2",
     "mongodb": "^6.5.0",
