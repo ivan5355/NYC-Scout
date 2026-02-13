@@ -29,7 +29,6 @@ const {
   handleRestaurantQueryWithSystemPrompt,
   handleConversationalPreferences
 } = require('./food_handler');
-const { handleSocialDM } = require('./social_handler');
 
 /* =====================
    MESSAGE DEDUPLICATION (MongoDB-based)
@@ -206,14 +205,6 @@ async function processDM(senderId, messageText, profile, context) {
     // Update the local context to reflect the cleared state
     context = { ...context, pendingType: null, pendingQuery: null, pendingFilters: null };
     // Fall through to intent classification below (don't recurse)
-  }
-
-  const socialResult = await handleSocialDM(senderId, messageText, context);
-  if (socialResult) {
-    if (socialResult.reply) {
-      await sendMessage(senderId, socialResult.reply);
-    }
-    return;
   }
 
   // Handle restaurant_preferences pending type (user responding with filters like "Brooklyn, cheap")
@@ -438,7 +429,7 @@ Example: "Brooklyn this weekend" or just "search"`;
     return;
   }
 
-  // Social appreciation / Emojis
+  // Appreciation / Emojis
   const isAppreciation = messageText && /^(thanks|thank you|thx|ty|awesome|cool|great|dope|nice|🔥|🙌|👏|👍|👌|❤️|✨)$/i.test(messageText.trim());
   if (isAppreciation) {
     await sendMessage(senderId, "You got it! 🗽 Let me know if you need help finding anything else.");
@@ -662,9 +653,6 @@ Example: "Brooklyn this weekend" or just "search"`;
       category: 'OTHER'
     };
   }
-
-  const socialResult = await handleSocialDM(senderId, messageText, context);
-  if (socialResult) return socialResult;
 
   return {
     reply: "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?",

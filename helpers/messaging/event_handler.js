@@ -54,18 +54,6 @@ async function runEventSearchWithFilters(senderId, pendingQuery, pendingFilters,
 
   await sendMessage(senderId, formatted.text);
 
-  // Social CTA disabled for now - keeping logic for future use
-  // if (searchResult.results?.length > 0) {
-  //   const socialCTA = {
-  //     text: "Want to go with someone?",
-  //     replies: [
-  //       { title: '👥 Find someone to go with', payload: `EVENT_FIND_BUDDY_${shownIds[0] || 'general'}` },
-  //       { title: 'Skip', payload: 'EVENT_SKIP_SOCIAL' }
-  //     ]
-  //   };
-  //   await sendMessage(senderId, socialCTA.text, socialCTA.replies);
-  // }
-
   return true;
 }
 
