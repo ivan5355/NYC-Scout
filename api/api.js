@@ -34,7 +34,7 @@ app.get('/instagram', (req, res) => {
 });
 
 // Instagram Webhook Handler (POST)
-app.post('/instagram', async (req, res) => {
+app.post('/instagram', (req, res) => {
   const body = req.body;
   console.log('📩 Incoming webhook:', JSON.stringify(body, null, 2));
 
@@ -44,19 +44,14 @@ app.post('/instagram', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  try {
-    await handleDM(body);
-    res.sendStatus(200);
-  } catch (err) {
-    // Handle rate limiting from Gemini API
-    if (err.response?.status === 429) {
-      console.log('[RATE LIMIT] Bypassing intent classification - rate limited');
-      res.status(200).send('RATE_LIMITED');
-      return;
-    }
+  // Respond 200 IMMEDIATELY to prevent Facebook retries.
+  // Facebook will re-send the webhook if it doesn't get a fast 200.
+  res.sendStatus(200);
+
+  // Process the message in the background (after response is sent)
+  handleDM(body).catch(err => {
     console.error('❌ Error handling DM:', err.message);
-    res.sendStatus(500);
-  }
+  });
 });
 
 // Health check

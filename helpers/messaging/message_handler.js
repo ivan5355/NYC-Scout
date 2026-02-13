@@ -32,35 +32,67 @@ const {
 const { handleSocialDM } = require('./social_handler');
 
 /* =====================
-   MESSAGE DEDUPLICATION
-   Instagram can send the same webhook multiple times
+   MESSAGE DEDUPLICATION (MongoDB-based)
+   Instagram can send the same webhook multiple times.
+   In-memory dedup does NOT work on Vercel serverless (each invocation
+   is a separate process). We use MongoDB atomic upsert instead.
 ===================== */
-const processedMessages = new Map();
-const MESSAGE_DEDUP_TTL = 60000; // 60 seconds
+const { MongoClient } = require('mongodb');
+
+let dedupCollection = null;
+
+async function getDedupCollection() {
+  if (dedupCollection) return dedupCollection;
+  try {
+    const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
+    const client = new MongoClient(uri);
+    await client.connect();
+    const db = client.db('nyc-events');
+    dedupCollection = db.collection('processed_messages');
+    // TTL index: auto-delete entries after 120 seconds
+    await dedupCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 120 }).catch(() => {});
+    return dedupCollection;
+  } catch (err) {
+    console.error('[DEDUP] MongoDB connection failed:', err.message);
+    return null;
+  }
+}
 
 function getMessageId(body) {
   const messaging = body?.entry?.[0]?.messaging?.[0];
   return messaging?.message?.mid || messaging?.postback?.mid || null;
 }
 
-function isDuplicateMessage(messageId) {
+async function isDuplicateMessage(messageId) {
   if (!messageId) return false;
 
-  // Clean up old entries
-  const now = Date.now();
-  for (const [id, timestamp] of processedMessages) {
-    if (now - timestamp > MESSAGE_DEDUP_TTL) {
-      processedMessages.delete(id);
+  try {
+    const col = await getDedupCollection();
+    if (!col) return false; // If DB fails, allow processing (better than dropping messages)
+
+    // Atomic: insert only if _id doesn't exist. If it already exists, it's a duplicate.
+    const result = await col.updateOne(
+      { _id: messageId },
+      { $setOnInsert: { _id: messageId, createdAt: new Date() } },
+      { upsert: true }
+    );
+
+    if (result.upsertedCount === 0) {
+      // Document already existed = duplicate
+      console.log(`[DEDUP] Skipping duplicate message: ${messageId}`);
+      return true;
     }
-  }
 
-  if (processedMessages.has(messageId)) {
-    console.log(`[DEDUP] Skipping duplicate message: ${messageId}`);
-    return true;
+    return false;
+  } catch (err) {
+    // Duplicate key error (race condition between concurrent upserts) = duplicate
+    if (err.code === 11000) {
+      console.log(`[DEDUP] Skipping duplicate message (race): ${messageId}`);
+      return true;
+    }
+    console.error('[DEDUP] Error checking duplicate:', err.message);
+    return false; // On error, allow processing
   }
-
-  processedMessages.set(messageId, now);
-  return false;
 }
 
 /* =====================
@@ -121,7 +153,7 @@ async function handleDM(body) {
 
   // Deduplicate webhook calls - Instagram can send the same message multiple times
   const messageId = getMessageId(body);
-  if (isDuplicateMessage(messageId)) return;
+  if (await isDuplicateMessage(messageId)) return;
 
   if (!senderId) {
     console.log('[handleDM] No senderId');
@@ -176,7 +208,7 @@ async function processDM(senderId, messageText, profile, context) {
     // Fall through to intent classification below (don't recurse)
   }
 
-  const socialResult = await handleSocialDM(senderId, messageText, null, context);
+  const socialResult = await handleSocialDM(senderId, messageText, context);
   if (socialResult) {
     if (socialResult.reply) {
       await sendMessage(senderId, socialResult.reply);
@@ -631,7 +663,7 @@ Example: "Brooklyn this weekend" or just "search"`;
     };
   }
 
-  const socialResult = await handleSocialDM(senderId, messageText, null, context);
+  const socialResult = await handleSocialDM(senderId, messageText, context);
   if (socialResult) return socialResult;
 
   return {
