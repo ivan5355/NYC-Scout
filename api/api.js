@@ -35,10 +35,17 @@ app.get('/instagram', (req, res) => {
 
 // Instagram Webhook Handler (POST)
 app.post('/instagram', async (req, res) => {
-  console.log('📩 Incoming webhook:', JSON.stringify(req.body, null, 2));
+  const body = req.body;
+  console.log('📩 Incoming webhook:', JSON.stringify(body, null, 2));
+
+  // Quick reject: only process instagram object
+  if (body?.object !== 'instagram') {
+    console.log('[WEBHOOK] Not an instagram event, ignoring');
+    return res.sendStatus(200);
+  }
 
   try {
-    await handleDM(req.body);
+    await handleDM(body);
     res.sendStatus(200);
   } catch (err) {
     // Handle rate limiting from Gemini API

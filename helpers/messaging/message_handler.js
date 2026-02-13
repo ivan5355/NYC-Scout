@@ -94,17 +94,47 @@ async function handleSystemCommands(senderId, text, returnResult = false) {
 ===================== */
 async function handleDM(body) {
   const messaging = body?.entry?.[0]?.messaging?.[0];
-  if (!messaging || messaging.message?.is_echo) return;
+  if (!messaging) {
+    console.log('[handleDM] No messaging object');
+    return;
+  }
+
+  // Block ALL echoes and bot-sent messages
+  if (messaging.message?.is_echo) {
+    console.log('[handleDM] Skipping echo');
+    return;
+  }
+
+  // Block if sender is the page itself (prevents self-reply loops)
+  const pageId = body?.entry?.[0]?.id;
+  const senderId = getSenderId(body);
+  if (senderId && pageId && senderId === String(pageId)) {
+    console.log('[handleDM] Skipping message from page itself');
+    return;
+  }
+
+  // Block read receipts, deliveries, reactions, etc.
+  if (messaging.read || messaging.delivery || messaging.reaction) {
+    console.log('[handleDM] Skipping non-message event (read/delivery/reaction)');
+    return;
+  }
 
   // Deduplicate webhook calls - Instagram can send the same message multiple times
   const messageId = getMessageId(body);
   if (isDuplicateMessage(messageId)) return;
 
-  const senderId = getSenderId(body);
-  if (!senderId) return;
+  if (!senderId) {
+    console.log('[handleDM] No senderId');
+    return;
+  }
 
   const incoming = getIncomingTextOrPayload(body);
-  if (!incoming.text) return;
+  if (!incoming.text) {
+    console.log('[handleDM] No text in message');
+    return;
+  }
+
+  console.log('[handleDM] Processing message from', senderId, ':', incoming.text);
 
   // Handle special commands BEFORE creating profile
   const systemHandled = await handleSystemCommands(senderId, incoming.text);
