@@ -164,9 +164,17 @@ async function handleDM(body) {
    MAIN DM PROCESSING (with Intent Classification Flow)
    ===================== */
 async function processDM(senderId, messageText, profile, context) {
-  console.log(`[DM] Processing Instagram DM: "${messageText}"`);
+  console.log(`[DM] Processing Instagram DM: "${messageText}" from sender: ${senderId}`);
+  console.log(`[DM] Current context:`, JSON.stringify(context, null, 2));
 
-
+  // Handle restaurant_gate pending type - clear pending state FIRST to prevent infinite recursion
+  if (context?.pendingType === 'restaurant_gate' && messageText) {
+    console.log(`[RESTAURANT_GATE] User provided cuisine: "${messageText}" - clearing gate and re-processing`);
+    await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
+    // Update the local context to reflect the cleared state
+    context = { ...context, pendingType: null, pendingQuery: null, pendingFilters: null };
+    // Fall through to intent classification below (don't recurse)
+  }
 
   const socialResult = await handleSocialDM(senderId, messageText, null, context);
   if (socialResult) {
