@@ -13,7 +13,8 @@ const {
   updateContext,
   addShownRestaurants,
   addShownEvents,
-  getContext
+  getContext,
+  clearContext
 } = require('../users/user_profile');
 
 const {
@@ -112,11 +113,34 @@ async function handleSystemCommands(senderId, text, returnResult = false) {
   }
 
   if (lowerText === 'reset') {
+    await clearContext(senderId);
     await sendMessage(senderId, "Reset complete! How can I help you today?");
     return true;
   }
 
   return null;
+}
+
+function looksLikeEventIntent(text) {
+  if (!text) return false;
+  const t = text.toLowerCase().trim();
+  const eventKeywords = [
+    'event', 'events', 'things to do', 'concert', 'show', 'comedy', 'music',
+    'jazz', 'sports', 'game', 'festival', 'party', 'nightlife', 'theater',
+    'theatre', 'activity', 'activities'
+  ];
+  return eventKeywords.some((kw) => t.includes(kw));
+}
+
+function looksLikeRestaurantIntent(text) {
+  if (!text) return false;
+  const t = text.toLowerCase().trim();
+  const restaurantKeywords = [
+    'restaurant', 'restaurants', 'food', 'eat', 'hungry', 'dinner', 'lunch',
+    'breakfast', 'brunch', 'sushi', 'pizza', 'ramen', 'thai', 'italian',
+    'mexican', 'chinese', 'indian', 'burger', 'cuisine'
+  ];
+  return restaurantKeywords.some((kw) => t.includes(kw));
 }
 
 
@@ -200,7 +224,12 @@ async function processDM(senderId, messageText, profile, context) {
 
   // Handle restaurant_gate pending type - clear pending state FIRST to prevent infinite recursion
   if (context?.pendingType === 'restaurant_gate' && messageText) {
-    console.log(`[RESTAURANT_GATE] User provided cuisine: "${messageText}" - clearing gate and re-processing`);
+    const shouldEscapeToEvents = looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText);
+    if (shouldEscapeToEvents) {
+      console.log(`[RESTAURANT_GATE] Event intent detected while in restaurant gate: "${messageText}" - clearing gate`);
+    } else {
+      console.log(`[RESTAURANT_GATE] User provided cuisine: "${messageText}" - clearing gate and re-processing`);
+    }
     await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
     // Update the local context to reflect the cleared state
     context = { ...context, pendingType: null, pendingQuery: null, pendingFilters: null };
@@ -278,10 +307,15 @@ async function processDM(senderId, messageText, profile, context) {
     }
     throw err;
   }
-  console.log(`[DM INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}, Filters:`, JSON.stringify(intentResult.detectedFilters));
+  let effectiveIntentType = intentResult.type;
+  if (effectiveIntentType === 'FOLLOWUP' && looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText)) {
+    console.log(`[DM INTENT FLOW] Overriding FOLLOWUP -> EVENT for explicit event query: "${messageText}"`);
+    effectiveIntentType = 'EVENT';
+  }
+  console.log(`[DM INTENT FLOW] Type: ${effectiveIntentType}, Ready: ${isReadyToSearch(intentResult)}, Filters:`, JSON.stringify(intentResult.detectedFilters));
 
   // Handle follow-up mode
-  if (intentResult.type === 'FOLLOWUP' && context?.lastCategory) {
+  if (effectiveIntentType === 'FOLLOWUP' && context?.lastCategory) {
     if (context.lastCategory === 'EVENT' || context.lastCategory === 'FOOD_SEARCH' || context.lastCategory === 'RESTAURANT') {
       // Continue with previous category
       if (context.lastCategory === 'EVENT') {
@@ -295,7 +329,7 @@ async function processDM(senderId, messageText, profile, context) {
   // =====================
   // EVENT FLOW (works like restaurant flow - always ask for missing filters)
   // =====================
-  if (intentResult.type === 'EVENT') {
+  if (effectiveIntentType === 'EVENT') {
     const { detectedFilters, missingFilters, filterPrompt } = intentResult;
 
     // Check if we have the key filters (date and borough) - ALWAYS require these
@@ -393,7 +427,7 @@ Example: "Brooklyn this weekend" or just "search"`;
   // =====================
   // RESTAURANT FLOW
   // =====================
-  if (intentResult.type === 'RESTAURANT') {
+  if (effectiveIntentType === 'RESTAURANT') {
     const { detectedFilters, missingFilters, filterPrompt } = intentResult;
 
     // Check if we have enough info to search
@@ -424,7 +458,7 @@ Example: "Brooklyn this weekend" or just "search"`;
   // =====================
   // FOOD QUESTION FLOW
   // =====================
-  if (intentResult.type === 'FOOD_QUESTION') {
+  if (effectiveIntentType === 'FOOD_QUESTION') {
     await sendMessage(senderId, "I'm best at finding specific restaurant and event recommendations! Tell me what you're craving or what kind of event you're looking for.");
     return;
   }
@@ -519,10 +553,15 @@ async function processDMForTest(senderId, messageText) {
   // NEW INTENT CLASSIFICATION FLOW IN TEST MODE
   // =====================
   const intentResult = await classifyIntentAndFilters(senderId, messageText);
-  console.log(`[TEST INTENT FLOW] Type: ${intentResult.type}, Ready: ${isReadyToSearch(intentResult)}`);
+  let effectiveIntentType = intentResult.type;
+  if (effectiveIntentType === 'FOLLOWUP' && looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText)) {
+    console.log(`[TEST INTENT FLOW] Overriding FOLLOWUP -> EVENT for explicit event query: "${messageText}"`);
+    effectiveIntentType = 'EVENT';
+  }
+  console.log(`[TEST INTENT FLOW] Type: ${effectiveIntentType}, Ready: ${isReadyToSearch(intentResult)}`);
 
   // Handle follow-up mode
-  if (intentResult.type === 'FOLLOWUP' && context?.lastCategory) {
+  if (effectiveIntentType === 'FOLLOWUP' && context?.lastCategory) {
     if (context.lastCategory === 'EVENT' || context.lastCategory === 'FOOD_SEARCH' || context.lastCategory === 'RESTAURANT') {
       if (context.lastCategory === 'EVENT') {
         return await runEventSearchWithFilters(senderId, messageText, context?.lastEventFilters || {}, profile, context, true);
@@ -533,7 +572,7 @@ async function processDMForTest(senderId, messageText) {
   }
 
   // EVENT FLOW (works like restaurant flow - always ask for missing filters)
-  if (intentResult.type === 'EVENT') {
+  if (effectiveIntentType === 'EVENT') {
     const { detectedFilters, missingFilters, filterPrompt } = intentResult;
 
     // Check if we have the key filters (date and borough) - ALWAYS require these
@@ -626,7 +665,7 @@ Example: "Brooklyn this weekend" or just "search"`;
   }
 
   // RESTAURANT FLOW
-  if (intentResult.type === 'RESTAURANT') {
+  if (effectiveIntentType === 'RESTAURANT') {
     const { detectedFilters, missingFilters, filterPrompt } = intentResult;
     const hasCuisineOrDish = detectedFilters.cuisine || detectedFilters.dish;
 
@@ -647,7 +686,7 @@ Example: "Brooklyn this weekend" or just "search"`;
   }
 
   // FOOD QUESTION FLOW
-  if (intentResult.type === 'FOOD_QUESTION') {
+  if (effectiveIntentType === 'FOOD_QUESTION') {
     return {
       reply: "I'm best at finding specific restaurant and event recommendations! Tell me what you're craving or what kind of event you're looking for.",
       category: 'OTHER'
