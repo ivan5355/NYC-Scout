@@ -40,6 +40,7 @@ const {
 const { MongoClient } = require('mongodb');
 
 let dedupCollection = null;
+const processDMInFlight = new Set();
 
 async function getDedupCollection() {
   if (dedupCollection) return dedupCollection;
@@ -68,7 +69,10 @@ async function isDuplicateMessage(messageId) {
 
   try {
     const col = await getDedupCollection();
-    if (!col) return false; // If DB fails, allow processing (better than dropping messages)
+    if (!col) {
+      console.log('[DEDUP] Collection unavailable, allowing message through');
+      return false; // If DB fails, allow processing (better than dropping messages)
+    }
 
     // Atomic: insert only if _id doesn't exist. If it already exists, it's a duplicate.
     const result = await col.updateOne(
@@ -83,6 +87,7 @@ async function isDuplicateMessage(messageId) {
       return true;
     }
 
+    console.log(`[DEDUP] Accepted new message: ${messageId}`);
     return false;
   } catch (err) {
     // Duplicate key error (race condition between concurrent upserts) = duplicate
@@ -176,6 +181,7 @@ async function handleDM(body) {
 
   // Deduplicate webhook calls - Instagram can send the same message multiple times
   const messageId = getMessageId(body);
+  console.log('[handleDM] Incoming messageId:', messageId || 'none');
   if (await isDuplicateMessage(messageId)) return;
 
   if (!senderId) {
@@ -222,11 +228,23 @@ async function processDM(senderId, messageText, profile, context) {
   console.log(`[DM] Processing Instagram DM: "${messageText}" from sender: ${senderId}`);
   console.log(`[DM] Current context:`, JSON.stringify(context, null, 2));
 
+  const guardKey = `${senderId}:${(messageText || '').trim().toLowerCase()}`;
+  if (processDMInFlight.has(guardKey)) {
+    console.error(`[DM_GUARD] Prevented re-entrant processDM loop for ${guardKey}`);
+    await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
+    return;
+  }
+  processDMInFlight.add(guardKey);
+
+  try {
   // Handle restaurant_gate pending type - clear pending state FIRST to prevent infinite recursion
   if (context?.pendingType === 'restaurant_gate' && messageText) {
     const shouldEscapeToEvents = looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText);
     if (shouldEscapeToEvents) {
-      console.log(`[RESTAURANT_GATE] Event intent detected while in restaurant gate: "${messageText}" - clearing gate`);
+      console.log(`[RESTAURANT_GATE] Event intent detected while in restaurant gate: "${messageText}" - routing to events`);
+      await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null, lastCategory: 'EVENT' });
+      const eventContext = { ...context, pendingType: null, pendingQuery: null, pendingFilters: null, lastCategory: 'EVENT' };
+      return await runEventSearchWithFilters(senderId, messageText, {}, profile, eventContext);
     } else {
       console.log(`[RESTAURANT_GATE] User provided cuisine: "${messageText}" - clearing gate and re-processing`);
     }
@@ -308,8 +326,8 @@ async function processDM(senderId, messageText, profile, context) {
     throw err;
   }
   let effectiveIntentType = intentResult.type;
-  if (effectiveIntentType === 'FOLLOWUP' && looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText)) {
-    console.log(`[DM INTENT FLOW] Overriding FOLLOWUP -> EVENT for explicit event query: "${messageText}"`);
+  if (looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText) && effectiveIntentType !== 'EVENT') {
+    console.log(`[DM INTENT FLOW] Overriding ${effectiveIntentType} -> EVENT for explicit event query: "${messageText}"`);
     effectiveIntentType = 'EVENT';
   }
   console.log(`[DM INTENT FLOW] Type: ${effectiveIntentType}, Ready: ${isReadyToSearch(intentResult)}, Filters:`, JSON.stringify(intentResult.detectedFilters));
@@ -480,6 +498,9 @@ Example: "Brooklyn this weekend" or just "search"`;
   }
 
   await sendMessage(senderId, "Welcome to NYC Scout! 🗽 I'm your local guide to the best food, events, and people in the city. What are we looking for today?");
+  } finally {
+    processDMInFlight.delete(guardKey);
+  }
 }
 
 /* =====================
@@ -494,6 +515,16 @@ async function processDMForTest(senderId, messageText) {
 
   const profile = await getOrCreateProfile(senderId);
   const context = await getContext(senderId);
+
+  if (context?.pendingType === 'restaurant_gate' && messageText) {
+    const shouldEscapeToEvents = looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText);
+    if (shouldEscapeToEvents) {
+      await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null, lastCategory: 'EVENT' });
+      const eventContext = { ...context, pendingType: null, pendingQuery: null, pendingFilters: null, lastCategory: 'EVENT' };
+      return await runEventSearchWithFilters(senderId, messageText, {}, profile, eventContext, true);
+    }
+    await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
+  }
 
 
   // Handle event_gate text responses (user types instead of clicking buttons)
@@ -554,8 +585,8 @@ async function processDMForTest(senderId, messageText) {
   // =====================
   const intentResult = await classifyIntentAndFilters(senderId, messageText);
   let effectiveIntentType = intentResult.type;
-  if (effectiveIntentType === 'FOLLOWUP' && looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText)) {
-    console.log(`[TEST INTENT FLOW] Overriding FOLLOWUP -> EVENT for explicit event query: "${messageText}"`);
+  if (looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText) && effectiveIntentType !== 'EVENT') {
+    console.log(`[TEST INTENT FLOW] Overriding ${effectiveIntentType} -> EVENT for explicit event query: "${messageText}"`);
     effectiveIntentType = 'EVENT';
   }
   console.log(`[TEST INTENT FLOW] Type: ${effectiveIntentType}, Ready: ${isReadyToSearch(intentResult)}`);
