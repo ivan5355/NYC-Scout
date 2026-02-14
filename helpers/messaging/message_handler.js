@@ -212,6 +212,13 @@ async function processDM(senderId, messageText, profile, context) {
     await updateContext(senderId, { pendingType: null, pendingQuery: null, pendingFilters: null });
     // Update the local context to reflect the cleared state
     context = { ...context, pendingType: null, pendingQuery: null, pendingFilters: null };
+    
+    // Check if the user is just providing a cuisine/dish that was missing
+    const intentResult = await classifyIntentAndFilters(senderId, messageText);
+    if (intentResult.type === 'RESTAURANT' && (intentResult.detectedFilters.cuisine || intentResult.detectedFilters.dish)) {
+      console.log(`[RESTAURANT_GATE] Detected cuisine/dish in gate response, running search`);
+      return await handleRestaurantQueryWithSystemPrompt(senderId, messageText, profile, context, false, intentResult.detectedFilters);
+    }
     // Fall through to intent classification below (don't recurse)
   }
 
