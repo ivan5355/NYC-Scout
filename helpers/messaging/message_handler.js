@@ -275,10 +275,33 @@ async function processDM(senderId, messageText, profile, context) {
   }
 
   // =====================
-  // NEW INTENT CLASSIFICATION FLOW
-  // Step 1: Classify EVENT vs RESTAURANT
-  // Step 2: Detect existing filters
-  // Step 3: Ask for missing filters OR run search
+  // FAST-PATH: Skip Gemini for obvious vague food/event requests
+  // This prevents Vercel timeout on slow Gemini calls
+  // =====================
+  const isVagueFood = looksLikeRestaurantIntent(messageText) && !looksLikeEventIntent(messageText);
+  const isVagueEvent = looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText);
+  const textWords = (messageText || '').trim().split(/\s+/);
+  const isShortVagueQuery = textWords.length <= 5;
+
+  // For very short, obviously food queries with no specific cuisine, skip Gemini
+  const specificCuisines = ['sushi', 'pizza', 'ramen', 'thai', 'italian', 'mexican', 'chinese', 'indian', 'burger', 'tacos', 'korean', 'japanese', 'french', 'vietnamese', 'greek', 'mediterranean', 'bbq', 'seafood', 'steak', 'pasta', 'noodles', 'dumplings', 'pho', 'curry'];
+  const textLower = messageText.toLowerCase().trim();
+  const hasCuisineKeyword = specificCuisines.some(c => textLower.includes(c));
+
+  if (isVagueFood && isShortVagueQuery && !hasCuisineKeyword) {
+    console.log(`[DM FAST-PATH] Vague food request, skipping Gemini: "${messageText}"`);
+    await sendMessage(senderId, "What kind of food are you craving? (e.g. sushi, pizza, thai, ramen...)");
+    await updateContext(senderId, {
+      pendingType: 'restaurant_gate',
+      pendingQuery: messageText,
+      pendingFilters: {},
+      lastCategory: 'FOOD_SEARCH'
+    });
+    return;
+  }
+
+  // =====================
+  // INTENT CLASSIFICATION FLOW (via Gemini)
   // =====================
   console.log(`[DM INTENT] Starting intent classification for: "${messageText}"`);
   
@@ -291,7 +314,10 @@ async function processDM(senderId, messageText, profile, context) {
       await sendMessage(senderId, "I'm getting a lot of messages right now! Try again in a moment. 🗽");
       return;
     }
-    throw err;
+    // On any other Gemini error, send a friendly fallback instead of crashing
+    console.error('[DM INTENT] Gemini classification failed:', err.message);
+    await sendMessage(senderId, "I'm having trouble understanding that right now. Try something like \"sushi in Brooklyn\" or \"events this weekend\"!");
+    return;
   }
   let effectiveIntentType = intentResult.type;
   if (looksLikeEventIntent(messageText) && !looksLikeRestaurantIntent(messageText) && effectiveIntentType !== 'EVENT') {

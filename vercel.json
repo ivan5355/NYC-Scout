@@ -15,5 +15,10 @@
       "src": "/instagram",
       "dest": "/api/api.js"
     }
-  ]
+  ],
+  "functions": {
+    "api/api.js": {
+      "maxDuration": 60
+    }
+  }
 }
