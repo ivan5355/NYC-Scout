@@ -16,6 +16,14 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(bodyParser.json());
+app.use((req, res, next) => {
+  const started = Date.now();
+  console.log(`[HTTP] ${req.method} ${req.originalUrl}`);
+  res.on('finish', () => {
+    console.log(`[HTTP] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - started}ms)`);
+  });
+  next();
+});
 
 // Instagram Webhook Verification (GET)
 app.get('/instagram', (req, res) => {
@@ -35,9 +43,18 @@ app.get('/instagram', (req, res) => {
 });
 
 // Instagram Webhook Handler (POST)
-app.post('/instagram', (req, res) => {
+function instagramWebhookHandler(req, res) {
   const body = req.body;
-  console.log('📩 Incoming webhook:', JSON.stringify(body, null, 2));
+  const messaging = body?.entry?.[0]?.messaging?.[0];
+  const messageId = messaging?.message?.mid || messaging?.postback?.mid || null;
+  const senderId = messaging?.sender?.id || null;
+
+  console.log('[WEBHOOK] Instagram POST received', JSON.stringify({
+    object: body?.object || null,
+    entryCount: body?.entry?.length || 0,
+    senderId,
+    messageId
+  }));
 
   if (body?.object !== 'instagram') {
     console.log('[WEBHOOK] Not an instagram event, ignoring');
@@ -51,7 +68,10 @@ app.post('/instagram', (req, res) => {
     console.error('❌ Error handling DM:', err.message);
   });
   waitUntil(work);
-});
+}
+
+app.post('/instagram', instagramWebhookHandler);
+app.post('/api/instagram', instagramWebhookHandler);
 
 // Health check
 app.get('/api/health', (req, res) => {
