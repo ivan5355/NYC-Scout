@@ -32,32 +32,16 @@ const {
 } = require('./food_handler');
 
 /* =====================
-   MESSAGE DEDUPLICATION (MongoDB-based)
-   Instagram can send the same webhook multiple times.
-   In-memory dedup does NOT work on Vercel serverless (each invocation
-   is a separate process). We use MongoDB atomic upsert instead.
+   MESSAGE DEDUPLICATION (In-memory)
+   Note: In-memory dedup is best-effort on Vercel serverless.
 ===================== */
-const { MongoClient } = require('mongodb');
-
-let dedupCollection = null;
+const processedMessages = new Set();
 const processDMInFlight = new Set();
 
-async function getDedupCollection() {
-  if (dedupCollection) return dedupCollection;
-  try {
-    const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
-    const client = new MongoClient(uri);
-    await client.connect();
-    const db = client.db('nyc-events');
-    dedupCollection = db.collection('processed_messages');
-    // TTL index: auto-delete entries after 120 seconds
-    await dedupCollection.createIndex({ createdAt: 1 }, { expireAfterSeconds: 120 }).catch(() => {});
-    return dedupCollection;
-  } catch (err) {
-    console.error('[DEDUP] MongoDB connection failed:', err.message);
-    return null;
-  }
-}
+// Clear processed messages periodically to prevent memory leaks
+setInterval(() => {
+  processedMessages.clear();
+}, 120000); // Clear every 2 minutes
 
 function getMessageId(body) {
   const messaging = body?.entry?.[0]?.messaging?.[0];
@@ -67,37 +51,14 @@ function getMessageId(body) {
 async function isDuplicateMessage(messageId) {
   if (!messageId) return false;
 
-  try {
-    const col = await getDedupCollection();
-    if (!col) {
-      console.log('[DEDUP] Collection unavailable, allowing message through');
-      return false; // If DB fails, allow processing (better than dropping messages)
-    }
-
-    // Atomic: insert only if _id doesn't exist. If it already exists, it's a duplicate.
-    const result = await col.updateOne(
-      { _id: messageId },
-      { $setOnInsert: { _id: messageId, createdAt: new Date() } },
-      { upsert: true }
-    );
-
-    if (result.upsertedCount === 0) {
-      // Document already existed = duplicate
-      console.log(`[DEDUP] Skipping duplicate message: ${messageId}`);
-      return true;
-    }
-
-    console.log(`[DEDUP] Accepted new message: ${messageId}`);
-    return false;
-  } catch (err) {
-    // Duplicate key error (race condition between concurrent upserts) = duplicate
-    if (err.code === 11000) {
-      console.log(`[DEDUP] Skipping duplicate message (race): ${messageId}`);
-      return true;
-    }
-    console.error('[DEDUP] Error checking duplicate:', err.message);
-    return false; // On error, allow processing
+  if (processedMessages.has(messageId)) {
+    console.log(`[DEDUP] Skipping duplicate message: ${messageId}`);
+    return true;
   }
+
+  processedMessages.add(messageId);
+  console.log(`[DEDUP] Accepted new message: ${messageId}`);
+  return false;
 }
 
 /* =====================
