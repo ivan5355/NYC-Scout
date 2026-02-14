@@ -7,6 +7,7 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
+const { waitUntil } = require('@vercel/functions');
 
 const { handleDM } = require('../helpers/messaging/message_handler');
 
@@ -34,7 +35,7 @@ app.get('/instagram', (req, res) => {
 });
 
 // Instagram Webhook Handler (POST)
-app.post('/instagram', async (req, res) => {
+app.post('/instagram', (req, res) => {
   const body = req.body;
   console.log('📩 Incoming webhook:', JSON.stringify(body, null, 2));
 
@@ -43,13 +44,13 @@ app.post('/instagram', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  try {
-    await handleDM(body);
-  } catch (err) {
-    console.error('❌ Error handling DM:', err.message);
-  }
-
+  // Always ACK quickly so Meta keeps webhook delivery healthy.
   res.sendStatus(200);
+
+  const work = handleDM(body).catch((err) => {
+    console.error('❌ Error handling DM:', err.message);
+  });
+  waitUntil(work);
 });
 
 // Health check
