@@ -34,24 +34,22 @@ app.get('/instagram', (req, res) => {
 });
 
 // Instagram Webhook Handler (POST)
-app.post('/instagram', (req, res) => {
+app.post('/instagram', async (req, res) => {
   const body = req.body;
   console.log('📩 Incoming webhook:', JSON.stringify(body, null, 2));
 
-  // Quick reject: only process instagram object
   if (body?.object !== 'instagram') {
     console.log('[WEBHOOK] Not an instagram event, ignoring');
     return res.sendStatus(200);
   }
 
-  // Respond 200 IMMEDIATELY to prevent Facebook retries.
-  // Facebook will re-send the webhook if it doesn't get a fast 200.
-  res.sendStatus(200);
-
-  // Process the message in the background (after response is sent)
-  handleDM(body).catch(err => {
+  try {
+    await handleDM(body);
+  } catch (err) {
     console.error('❌ Error handling DM:', err.message);
-  });
+  }
+
+  res.sendStatus(200);
 });
 
 // Health check
